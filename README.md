@@ -66,9 +66,32 @@ cable.
 - **Lift-off distance:** the mouse stores a 0.7 mm setting, but it made no
   noticeable difference, so the app offers only 1 mm and 2 mm.
 
-Other ATK / VXE mice that use the same "COMPX" protocol may work. The app checks the
-DPI format before trusting it, but it is not tested on them. Mice with
-8000 Hz polling or other sensors may need changes. Make a backup first (☰ menu).
+## Other mice
+
+ATK-made mice (VXE, ATK, Dragonfly and others) use one of two protocols. Which
+one depends on the mouse's hardware revision, not its model name. This app
+supports only **COMPX**. It detects the protocol when the mouse is plugged in, and
+tells you if a mouse uses the other one (**BITMOUSE**). For those mice, use
+[OpenATK](https://github.com/SunnybeeXD/OpenATK) in Chrome or Chromium.
+
+OpenATK's device list contains about 150 COMPX mice. None of them except the MAD R
+have been tested with this app. How likely each one is to work depends on its
+sensor:
+
+| Sensor (DPI format) | Mice | What to expect |
+|---|---|---|
+| PAW3395 / PAW3950, like the MAD R | ~37 | Best chance: the same code paths as the tested mouse. |
+| PAW3950 Ultra | ~46 | The DPI format is in the code but untested. DPI is capped at 26000, below these sensors' maximum. |
+| PAW3955 | ~31 | DPI settings are greyed out, because these sensors store DPI elsewhere. Other settings may still work. |
+| Unknown | ~36 | Unknown. |
+
+All of them share these limits:
+
+- The polling rate menu only offers up to 1000 Hz, so 2K/4K/8K rates can't be set.
+- Only the first six buttons can be remapped.
+
+If you try another mouse, make a backup first (☰ menu). Reports of what does and
+doesn't work are welcome as GitHub issues.
 
 ## How it works
 

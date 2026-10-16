@@ -124,6 +124,7 @@ class Window(Adw.ApplicationWindow):
         self.state = None
         self.loading = False
         self.connecting = False
+        self.unsupported = False
         self.nodes = None
         self.dpi_timers = {}
 
@@ -165,7 +166,7 @@ class Window(Adw.ApplicationWindow):
 
     # ---- layout ---------------------------------------------------------
     def _build_page(self):
-        dpi = Adw.PreferencesGroup(
+        dpi = self.dpi_group = Adw.PreferencesGroup(
             title="Sensitivity (DPI)",
             description="To switch stages with the mouse, set a button to DPI cycle below.")
         self.stage_count = Adw.SpinRow.new_with_range(1, 8, 1)
@@ -224,14 +225,15 @@ class Window(Adw.ApplicationWindow):
                            lambda m: m.set_button(i, json.loads(v)), f"{name}: {l}"))
             btns.add(c.row)
             self.buttons.append(c)
-        # the MAD R board has a sixth (DPI) button slot but no physical button
-        self.buttons[5].row.set_visible(False)
         self.page.add(btns)
 
     # ---- connection -----------------------------------------------------
     def _poll(self):
         # reconnect when nothing is open, or a cable/dongle was plugged or pulled
-        if not self.connecting and (self.mouse is None or atk.find_nodes() != self.nodes):
+        nodes = atk.find_nodes()
+        if self.connecting:
+            return True
+        if nodes != self.nodes or (self.mouse is None and not self.unsupported):
             self.connect_mouse()
         return True
 
@@ -244,17 +246,20 @@ class Window(Adw.ApplicationWindow):
             if self.mouse:
                 self.mouse.close()
             self.mouse = None
+            self.nodes = atk.find_nodes()
             m = atk.Mouse()
             self.mouse = m
-            self.nodes = atk.find_nodes()
             return m.read_state()   # waits a few seconds for a sleeping mouse
 
         def done(s):
             self.connecting = False
+            self.unsupported = False
             self.show_state(s)
 
         def fail(e):
             self.connecting = False
+            # retrying an unsupported mouse won't help; wait until something is replugged
+            self.unsupported = isinstance(e, atk.Unsupported)
             self.show_error(e)
         self.worker.submit(job, done, fail)
 
@@ -289,9 +294,17 @@ class Window(Adw.ApplicationWindow):
         self.title.set_subtitle(sub)
 
         self.loading = True
+        # the MAD R board has a sixth (DPI) button slot but no physical button
+        self.buttons[5].row.set_visible(not s["id"]["name"].startswith("VXE MAD R"))
+        self.dpi_group.set_sensitive(s["stages"] is not None)
+        self.dpi_group.set_description(
+            "To switch stages with the mouse, set a button to DPI cycle below."
+            if s["stages"] is not None else
+            "This mouse stores DPI in a format the app can't read yet.")
         self.stage_count.set_value(s["stage_count"])
         for i, row in enumerate(self.stage_rows):
-            row.set_value(min(s["stages"][i], MAX_DPI))
+            if s["stages"] is not None:
+                row.set_value(min(s["stages"][i], MAX_DPI))
             row.set_visible(i < s["stage_count"])
         self.active.limit([(i, f"Stage {i + 1}") for i in range(s["stage_count"])])
         self.active.set(s["active_stage"])

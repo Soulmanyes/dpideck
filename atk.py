@@ -63,6 +63,10 @@ class DeviceError(Exception):
     pass
 
 
+class Unsupported(DeviceError):
+    """The mouse speaks a protocol this driver does not implement."""
+
+
 class Asleep(DeviceError):
     """The mouse did not answer; usually it is asleep and needs a nudge."""
 
@@ -148,8 +152,31 @@ def encode_key(a):
 DONGLE_PIDS = {0x104D, 0x1040}   # MAD 1K / 8K receivers
 
 
+def report_bytes(desc, report_id):
+    """Byte length of an input report in a HID report descriptor, or None."""
+    i, rid, size, count = 0, 0, 0, 0
+    while i < len(desc):
+        b = desc[i]
+        n = (0, 1, 2, 4)[b & 3]
+        val = int.from_bytes(desc[i + 1:i + 1 + n], "little")
+        if b & 0xFC == 0x84:      # Report ID
+            rid = val
+        elif b & 0xFC == 0x74:    # Report Size (bits)
+            size = val
+        elif b & 0xFC == 0x94:    # Report Count
+            count = val
+        elif b & 0xFC == 0x80 and rid == report_id:   # Input
+            return size * count // 8
+        i += 1 + n
+    return None
+
+
 def find_nodes():
-    """All /dev/hidrawN nodes carrying the vendor config report (ID 8), as (node, pid)."""
+    """All ATK vendor config nodes as (node, pid, family).
+
+    Both ATK protocols use report ID 8. COMPX (this driver) sends 16-byte
+    reports; BITMOUSE sends 63-byte ones and is not supported here.
+    """
     found = []
     for sys_path in sorted(glob.glob("/sys/class/hidraw/hidraw*")):
         try:
@@ -161,26 +188,31 @@ def find_nodes():
             continue
         if f"{VID:08X}:" not in uevent.upper():
             continue
-        # vendor usage page (06 xx FF) and report ID 8 (85 08)
-        if b"\x85\x08" in desc and any(desc[i] == 0x06 and desc[i + 2] == 0xFF
-                                       for i in range(len(desc) - 2)):
-            pid = uevent.upper().split(f"{VID:08X}:")[1][:8]
-            found.append(("/dev/" + os.path.basename(sys_path), int(pid, 16)))
+        length = report_bytes(desc, REPORT_ID)
+        if length is None:
+            continue
+        family = "compx" if length == 16 else "bitmouse"
+        pid = uevent.upper().split(f"{VID:08X}:")[1][:8]
+        found.append(("/dev/" + os.path.basename(sys_path), int(pid, 16), family))
     return found
 
 
 def find_node():
-    """Pick one node, preferring a cable connection over a wireless dongle."""
+    """Pick one node: supported protocol first, then cable over wireless dongle."""
     nodes = find_nodes()
-    nodes.sort(key=lambda n: n[1] in DONGLE_PIDS)
-    return nodes[0] if nodes else (None, None)
+    nodes.sort(key=lambda n: (n[2] != "compx", n[1] in DONGLE_PIDS))
+    return nodes[0] if nodes else (None, None, None)
 
 
 class Mouse:
     def __init__(self, node=None, log=None):
-        self.node, self.pid = (node, None) if node else find_node()
+        self.node, self.pid, family = (node, None, "compx") if node else find_node()
         if not self.node:
             raise DeviceError("No ATK/VXE mouse found. Is the dongle plugged in?")
+        if family != "compx":
+            raise Unsupported("This mouse uses ATK's other protocol (BITMOUSE), which "
+                              "this app does not support. OpenATK supports it in "
+                              "Chrome or Chromium: https://github.com/SunnybeeXD/OpenATK")
         try:
             self.fd = os.open(self.node, os.O_RDWR | os.O_NONBLOCK)
         except PermissionError:
@@ -339,7 +371,12 @@ class Mouse:
         self.stage_count = rate[2] if 1 <= rate[2] <= 8 else 4
         s["stage_count"] = self.stage_count
         s["active_stage"] = rate[4]
-        s["stages"] = self.read_stages(8, s["id"]["group"])
+        try:
+            s["stages"] = self.read_stages(8, s["id"]["group"])
+        except Asleep:
+            raise
+        except DeviceError:
+            s["stages"] = None   # e.g. PAW3955 mice keep DPI elsewhere; the rest still works
         s["dpi_codec"] = self.group
         s["lod_code"] = self.read(ADDR_LOD, 2)[0]
         func = self.read(ADDR_FUNC_ROW, 10)
@@ -442,7 +479,7 @@ if __name__ == "__main__":
     import sys
     m = Mouse(log=print if "-v" in sys.argv else None)
     m.wake(20)
-    print("nodes:", [(n, hex(p)) for n, p in find_nodes()])
+    print("nodes:", [(n, hex(p), fam) for n, p, fam in find_nodes()])
     print("using:", m.node, "pid:", hex(m.pid or 0),
           "(dongle)" if m.pid in DONGLE_PIDS else "(cable)")
     print(json.dumps(m.read_state(), indent=2))
