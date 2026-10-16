@@ -21,10 +21,11 @@ import atk  # noqa: E402
 APP_ID = "local.atkmouse.Settings"
 CONFIG_DIR = os.path.expanduser("~/.config/atk-mouse")
 
-RATES = [(125, "125 Hz"), (250, "250 Hz"), (500, "500 Hz"), (1000, "1000 Hz")]
-SENSOR_MODES = [(0, "Basic"), (2, "Factory default"),
-                (4, "Competitive"), (5, "Competitive Max")]
-LOD = [(1, "1 mm"), (2, "2 mm")]
+SENSOR_MODES = [(atk.SENSOR_BASIC, "Basic"), (atk.SENSOR_COMPETITIVE, "Competitive"),
+                (atk.SENSOR_COMPETITIVE_MAX, "Competitive Max")]
+# Fixed lift-off steps; the codes are not in ascending order
+LOD_LEVELS = {"levels": [(1, "1 mm"), (2, "2 mm")],
+              "levels07": [(3, "0.7 mm"), (1, "1 mm"), (2, "2 mm")]}
 DEBOUNCE = [(0, "Off"), (1, "1 ms"), (2, "2 ms"), (4, "4 ms"),
             (8, "8 ms"), (15, "15 ms"), (20, "20 ms")]
 SLEEP = [(30, "30 s"), (60, "1 min"), (120, "2 min"), (180, "3 min"),
@@ -44,7 +45,6 @@ ACTIONS = [
     ({"kind": "scroll", "dir": "right"}, "Scroll right"),
     ({"kind": "disable"}, "Disabled"),
 ]
-MAX_DPI = 26000   # PAW3395
 
 
 class Worker:
@@ -161,8 +161,25 @@ class Window(Adw.ApplicationWindow):
         view.set_content(self.toasts)
         self.set_content(view)
 
+        # The mouse wheel must scroll the page, never change a number box: a
+        # stray scroll over a DPI box would otherwise write a new DPI.
+        for spin in (self.stage_count, *self.stage_rows, self.lod_mm):
+            ctrl = Gtk.EventControllerScroll(flags=Gtk.EventControllerScrollFlags.VERTICAL)
+            ctrl.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+            ctrl.connect("scroll", self._scroll_page)
+            spin.add_controller(ctrl)
+
         self.connect_mouse()
         GLib.timeout_add_seconds(3, self._poll)
+
+    def _scroll_page(self, _ctrl, _dx, dy):
+        w = self.page.get_first_child()
+        while w and not isinstance(w, Gtk.ScrolledWindow):
+            w = w.get_first_child()
+        if w:
+            adj = w.get_vadjustment()
+            adj.set_value(adj.get_value() + dy * 50)
+        return True   # swallow it so the number box never sees it
 
     # ---- layout ---------------------------------------------------------
     def _build_page(self):
@@ -178,7 +195,7 @@ class Window(Adw.ApplicationWindow):
         dpi.add(self.active.row)
         self.stage_rows = []
         for i in range(8):
-            row = Adw.SpinRow.new_with_range(50, MAX_DPI, 50)
+            row = Adw.SpinRow.new_with_range(50, 26000, 50)
             row.set_snap_to_ticks(True)
             row.set_title(f"Stage {i + 1}")
             row.connect("notify::value", self.on_stage_dpi, i)
@@ -187,15 +204,29 @@ class Window(Adw.ApplicationWindow):
         self.page.add(dpi)
 
         perf = Adw.PreferencesGroup(title="Sensor")
-        self.rate = Choice("Polling rate", RATES,
+        self.rate = Choice("Polling rate", [(1000, "1000 Hz")],
                            lambda v, l: self.apply(lambda m: m.set_rate(v), f"Polling rate {l}"))
         self.mode = Choice("Sensor mode", SENSOR_MODES,
                            lambda v, l: self.apply(lambda m: m.set_sensor_mode(v), f"Sensor mode: {l}"),
                            subtitle="Competitive modes use more battery")
-        self.lod = Choice("Lift-off distance", LOD,
+        self.lod = Choice("Lift-off distance", LOD_LEVELS["levels"],
                           lambda v, l: self.apply(lambda m: m.set_lod(v), f"Lift-off distance {l}"))
         for c in (self.rate, self.mode, self.lod):
             perf.add(c.row)
+        # continuous lift-off sensors (PAW3950 Ultra, PAW3955) take any 0.1 mm step
+        self.lod_mm = Adw.SpinRow.new_with_range(0.7, 1.7, 0.1)
+        self.lod_mm.set_title("Lift-off distance (mm)")
+        self.lod_mm.set_digits(1)
+        self.lod_mm.set_snap_to_ticks(True)
+        self.lod_mm.connect("notify::value", self.on_lod_mm)
+        self.lod_timer = None
+        perf.add(self.lod_mm)
+        # sensors with an unknown lift-off format: show the raw value, don't write
+        self.lod_raw = Adw.ActionRow(title="Lift-off distance",
+                                     subtitle="Not adjustable for this mouse yet")
+        self.lod_raw_value = Gtk.Label(css_classes=["dim-label"])
+        self.lod_raw.add_suffix(self.lod_raw_value)
+        perf.add(self.lod_raw)
         self.switches = {}
         for key, title, sub, setter in (
                 ("motion_sync", "Motion sync", "Smoother tracking, about 1 ms more latency",
@@ -294,8 +325,8 @@ class Window(Adw.ApplicationWindow):
         self.title.set_subtitle(sub)
 
         self.loading = True
-        # the MAD R board has a sixth (DPI) button slot but no physical button
-        self.buttons[5].row.set_visible(not s["id"]["name"].startswith("VXE MAD R"))
+        caps = s["caps"]
+        self.buttons[5].row.set_visible(caps["dpi_button"])
         self.dpi_group.set_sensitive(s["stages"] is not None)
         self.dpi_group.set_description(
             "To switch stages with the mouse, set a button to DPI cycle below."
@@ -303,14 +334,26 @@ class Window(Adw.ApplicationWindow):
             "This mouse stores DPI in a format the app can't read yet.")
         self.stage_count.set_value(s["stage_count"])
         for i, row in enumerate(self.stage_rows):
+            row.get_adjustment().set_upper(caps["max_dpi"])
             if s["stages"] is not None:
-                row.set_value(min(s["stages"][i], MAX_DPI))
+                row.set_value(min(s["stages"][i], caps["max_dpi"]))
             row.set_visible(i < s["stage_count"])
         self.active.limit([(i, f"Stage {i + 1}") for i in range(s["stage_count"])])
         self.active.set(s["active_stage"])
+        self.rate.limit([(hz, f"{hz} Hz") for hz in caps["rates"]])
         self.rate.set(s["rate_hz"])
+        self.mode.limit(SENSOR_MODES if caps["competitive_max"] else SENSOR_MODES[:2])
         self.mode.set(s["sensor_mode"])
-        self.lod.set(s["lod_code"])
+        self.lod.row.set_visible(caps["lod"] in LOD_LEVELS)
+        self.lod_mm.set_visible(caps["lod"] == "continuous")
+        self.lod_raw.set_visible(caps["lod"] is None)
+        if caps["lod"] in LOD_LEVELS:
+            self.lod.limit(LOD_LEVELS[caps["lod"]])
+            self.lod.set(s["lod_code"])
+        elif caps["lod"] == "continuous":
+            self.lod_mm.set_value(atk.Mouse.lod_code_to_mm(s["lod_code"]))
+        else:
+            self.lod_raw_value.set_label(f"code {s['lod_code']}")
         self.debounce.set(s["debounce_ms"])
         self.sleep.set(s["sleep_s"])
         for key, row in self.switches.items():
@@ -325,10 +368,10 @@ class Window(Adw.ApplicationWindow):
             return
         m = self.mouse
 
-        def done(_):
+        def done(result):
             self.toasts.add_toast(Adw.Toast(title=message, timeout=2))
             if after:
-                after()
+                after(result)
 
         def fail(e):
             self.show_error(e)
@@ -362,9 +405,30 @@ class Window(Adw.ApplicationWindow):
         def fire():
             del self.dpi_timers[i]
             dpi = int(row.get_value())
-            self.apply(lambda m: m.set_stage_dpi(i, dpi), f"Stage {i + 1}: {dpi} DPI")
+
+            def stored(value):
+                # show what the mouse really stored; high DPI rounds to coarser steps
+                if value != dpi:
+                    self.loading = True
+                    row.set_value(value)
+                    self.loading = False
+            self.apply(lambda m: m.set_stage_dpi(i, dpi), f"Stage {i + 1}: {dpi} DPI", stored)
             return False
         self.dpi_timers[i] = GLib.timeout_add(500, fire)
+
+    def on_lod_mm(self, row, _pspec):
+        if self.loading:
+            return
+        if self.lod_timer:
+            GLib.source_remove(self.lod_timer)
+
+        def fire():
+            self.lod_timer = None
+            mm = round(row.get_value(), 1)
+            code = atk.Mouse.lod_mm_to_code(mm)
+            self.apply(lambda m: m.set_lod(code), f"Lift-off distance {mm} mm")
+            return False
+        self.lod_timer = GLib.timeout_add(300, fire)
 
     # ---- menu -----------------------------------------------------------
     def _file_dialog(self, save, cb):

@@ -13,6 +13,7 @@ Frame (16 bytes, sent as output report 8):
 import glob
 import json
 import os
+import re
 import select
 import time
 
@@ -47,14 +48,20 @@ RATES = {1000: 0x01, 500: 0x02, 250: 0x04, 125: 0x08,
 RATES_REV = {v: k for k, v in RATES.items()}
 
 # Known mice behind COMPX dongles: (cid, mid) -> (name, DPI codec group)
-MICE = {(2, 49): ("VXE MAD R", "B"), (2, 54): ("VXE MAD R+", "B"),
-        (2, 47): ("VXE MAD R MAJOR", "B"), (2, 55): ("VXE MAD R MAJOR+", "B"),
-        (2, 133): ("VXE MAD R", "A")}
+# Device registry from OpenATK: mice by CID/MID ("2,49") and by USB PID ("103f").
+# Flags: A/B/M/X = DPI format, u = continuous lift-off, 7 = 0.7 mm step, r = receiver.
+with open(os.path.join(os.path.dirname(os.path.realpath(__file__)), "devices.json")) as _f:
+    REGISTRY = json.load(_f)
 
-# Mice plugged in by cable enumerate under their own PID
-WIRED_PIDS = {0x103F: ("VXE MAD R", "B"), 0x104B: ("VXE MAD R+", "B"),
-              0x103E: ("VXE MAD R MAJOR", "B"), 0x104C: ("VXE MAD R MAJOR+", "B"),
-              0x132B: ("VXE MAD R", "A")}
+# Mice with a sixth button slot in firmware but no physical button (VXE MAD R)
+NO_DPI_BUTTON = {"cid": {"2,49"}, "pid": {0x103F}}
+
+# Sensor modes as ATK HUB reads and writes them for COMPX mice. (OpenATK lists
+# 0/4/5, which is the BITMOUSE encoding; the COMPX driver stores 0/1/2 as-is.)
+SENSOR_BASIC, SENSOR_COMPETITIVE, SENSOR_COMPETITIVE_MAX = 0, 1, 2
+
+# Highest DPI per sensor, from the sensor datasheets
+MAX_DPI = {"B": 26000, "B7": 30000, "A": 42000}
 
 BUTTON_NAMES =["Left", "Right", "Middle", "Back", "Forward", "DPI button"]
 
@@ -310,15 +317,84 @@ class Mouse:
         raise Asleep("Mouse did not answer. Move it to wake it up.")
 
     def identify(self):
-        """Ask for CID/MID; over a cable that query may go unanswered, so fall back to the PID."""
+        """Look the mouse up by CID/MID, falling back to its USB PID when plugged in by cable."""
+        key = None
         try:
             r = self.xfer(CMD_CID_MID)
-            cid, mid = r[5], r[6]
-            name, group = MICE.get((cid, mid), (f"Unknown ATK mouse ({cid},{mid})", None))
-            return {"cid": cid, "mid": mid, "name": name, "group": group}
+            key = f"{r[5]},{r[6]}"
         except Asleep:
-            name, group = WIRED_PIDS.get(self.pid, ("ATK mouse", None))
-            return {"cid": None, "mid": None, "name": name, "group": group}
+            pass
+        entry = REGISTRY["cid"].get(key)
+        pid_entry = REGISTRY["pids"].get(f"{self.pid or 0:04x}")
+        if entry is None and pid_entry and "r" not in pid_entry[1]:
+            entry = pid_entry
+        if entry:
+            name, flags = entry
+        else:
+            name, flags = f"Unknown ATK mouse ({key or 'no ID'})", ""
+        dpi_button = key not in NO_DPI_BUTTON["cid"] and self.pid not in NO_DPI_BUTTON["pid"]
+        receiver = pid_entry[0] if pid_entry and "r" in pid_entry[1] else None
+        return {"key": key, "name": name, "flags": flags,
+                "dpi_button": dpi_button, "receiver": receiver}
+
+    def usb_max_rate(self, receiver_name=None):
+        """Highest polling rate the USB link can carry.
+
+        Full-speed USB polls at most every 1 ms (1000 Hz). High-speed links
+        report their interrupt interval, for example 125us for 8000 Hz.
+        A receiver named "1K"/"4K"/"8K" caps it further.
+        """
+        cap = 1000
+        try:
+            hid_dev = os.path.realpath(f"/sys/class/hidraw/{os.path.basename(self.node)}/device")
+            intf = os.path.dirname(hid_dev)
+            with open(os.path.join(os.path.dirname(intf), "speed")) as f:
+                speed = float(f.read())
+            if speed >= 480:
+                for iv in glob.glob(f"{intf}/ep_*/interval"):
+                    with open(iv) as f:
+                        t = f.read().strip()
+                    us = float(t[:-2]) if t.endswith("us") else float(t[:-2]) * 1000
+                    cap = max(cap, min(8000, int(1_000_000 / us)))
+        except (OSError, ValueError):
+            pass
+        if receiver_name:
+            m = re.search(r"(\d)\s*k\b", receiver_name, re.I)
+            if m:
+                cap = min(cap, int(m.group(1)) * 1000)
+        return cap
+
+    @staticmethod
+    def competitive_max_allowed(key, version):
+        """ATK HUB's rule: CID 1 mice always; others from a listed firmware version on."""
+        if not key:
+            return False
+        if key.split(",")[0] == "1":
+            return True
+        need = REGISTRY.get("competitive_max", {}).get(key)
+        try:
+            return bool(need) and float(version) >= float(need)
+        except (TypeError, ValueError):
+            return False
+
+    @staticmethod
+    def capabilities(ident, max_rate, version=None, sensor_mode=None):
+        flags = ident["flags"]
+        group = next((g for g in "ABMX" if g in flags), None)
+        if "u" in flags:
+            lod = "continuous"                          # 0.7-1.7 mm in 0.1 mm steps
+        elif group == "B":
+            lod = "levels07" if "7" in flags else "levels"
+        else:
+            lod = None                                  # unknown sensor: read-only
+        sensor = (group or "") + ("7" if "7" in flags else "")
+        return {"dpi_codec": group if group in CODECS else None,
+                "max_dpi": MAX_DPI.get(sensor, MAX_DPI.get(group, 26000)),
+                "lod": lod,
+                "rates": [hz for hz in sorted(RATES) if hz <= max_rate],
+                "competitive_max": (Mouse.competitive_max_allowed(ident["key"], version)
+                                    or sensor_mode == SENSOR_COMPETITIVE_MAX),
+                "dpi_button": ident["dpi_button"]}
 
     def versions(self):
         out = {}
@@ -334,30 +410,20 @@ class Mouse:
         r = self.xfer(CMD_BATTERY)
         return {"level": r[5], "charging": bool(r[6]), "volts": (r[7] << 8 | r[8]) / 1000}
 
-    def read_stages(self, count, expected_group=None):
-        """Decode the DPI table with both codecs and keep the one that looks right.
+    def read_stages(self, count):
+        """Decode the DPI table with the codec the registry names for this mouse.
 
-        A wrong codec returns plausible but scaled numbers instead of failing,
-        so pick on evidence: real stages are 50-42000, on a 10-DPI step, x == y.
+        The codecs can't be told apart from the bytes: the MAD R's 1600 DPI
+        reads as a plausible 320 under the wrong one. So without a known
+        codec (unlisted mouse, PAW3955, unknown sensor) DPI stays unreadable.
         """
+        if self.group not in CODECS:
+            raise DeviceError("DPI format unknown for this mouse")
+        dec = CODECS[self.group][1]
         flat = []
         for a in ADDR_DPI_ROWS:
             flat += self.read(a, 8)
-        best = None
-        for g, (_enc, dec) in CODECS.items():
-            stages = []
-            for i in range(count):
-                o = 4 * i
-                stages.append((dec(flat[o], flat[o + 2] & 0x0F),
-                               dec(flat[o + 1], (flat[o + 2] >> 4) & 0x0F)))
-            score = sum(10 for x, y in stages if 50 <= x <= 42000 and x % 10 == 0 and x == y)
-            score += 1 if g == expected_group else 0
-            if best is None or score > best[0]:
-                best = (score, g, stages)
-        if best[0] < 10:
-            raise DeviceError("could not decode the DPI table: " + bytes(flat).hex(" "))
-        self.group = best[1]
-        return [x for x, _y in best[2]]
+        return [dec(flat[4 * i], flat[4 * i + 2] & 0x0F) for i in range(count)]
 
     def read_state(self):
         self.wake()
@@ -368,21 +434,25 @@ class Mouse:
             pass
         rate = self.read(ADDR_RATE_ROW, 10)
         s["rate_hz"] = RATES_REV.get(rate[0])
+        s["sensor_mode"] = self.read(ADDR_SENSOR_ROW, 6)[4]
+        # never hide a rate or mode the mouse is already set to
+        max_rate = max(self.usb_max_rate(s["id"]["receiver"]), s["rate_hz"] or 0)
+        s["caps"] = self.capabilities(s["id"], max_rate, s["versions"].get("mouse"),
+                                      s["sensor_mode"])
+        self.group = s["caps"]["dpi_codec"]
         self.stage_count = rate[2] if 1 <= rate[2] <= 8 else 4
         s["stage_count"] = self.stage_count
         s["active_stage"] = rate[4]
         try:
-            s["stages"] = self.read_stages(8, s["id"]["group"])
+            s["stages"] = self.read_stages(8)
         except Asleep:
             raise
         except DeviceError:
-            s["stages"] = None   # e.g. PAW3955 mice keep DPI elsewhere; the rest still works
-        s["dpi_codec"] = self.group
+            s["stages"] = None   # DPI format unknown; the other settings still work
         s["lod_code"] = self.read(ADDR_LOD, 2)[0]
         func = self.read(ADDR_FUNC_ROW, 10)
         s.update(debounce_ms=func[0], motion_sync=bool(func[2]), sleep_s=func[4] * 10,
                  angle_snap=bool(func[6]), ripple=bool(func[8]))
-        s["sensor_mode"] = self.read(ADDR_SENSOR_ROW, 6)[4]
         keys = self.read_long(ADDR_KEY0, 24)
         s["buttons"] = [decode_key(*keys[4 * i:4 * i + 3]) for i in range(6)]
         return s
@@ -430,8 +500,9 @@ class Mouse:
         self.patch_row(ADDR_RATE_ROW, 10, 2, n)
 
     def set_stage_dpi(self, i, dpi):
-        if self.group is None:
-            raise DeviceError("read the DPI table first")
+        """Write one stage; returns the DPI the mouse actually stored (codecs round)."""
+        if self.group not in CODECS:
+            raise DeviceError("DPI format unknown for this mouse")
         enc = CODECS[self.group][0]
         row_addr = ADDR_DPI_ROWS[i >> 1]
         row = self.read(row_addr, 8)
@@ -440,9 +511,19 @@ class Mouse:
         o = 4 * (i & 1)
         row[o:o + 4] = [xb, xb, mode, inv(xb + xb + mode)]
         self.write(row_addr, row)
+        return CODECS[self.group][1](xb, xn)
 
     def set_lod(self, code):
         self.write(ADDR_LOD, pair(code))
+
+    @staticmethod
+    def lod_mm_to_code(mm):
+        """Continuous lift-off sensors: code 1 = 0.7 mm ... code 11 = 1.7 mm."""
+        return min(11, max(1, round(mm * 10) - 6))
+
+    @staticmethod
+    def lod_code_to_mm(code):
+        return (code + 6) / 10
 
     def set_debounce(self, ms):
         self.patch_row(ADDR_FUNC_ROW, 10, 0, ms)

@@ -74,21 +74,32 @@ supports only **COMPX**. It detects the protocol when the mouse is plugged in, a
 tells you if a mouse uses the other one (**BITMOUSE**). For those mice, use
 [OpenATK](https://github.com/SunnybeeXD/OpenATK) in Chrome or Chromium.
 
-OpenATK's device list contains about 150 COMPX mice. None of them except the MAD R
-have been tested with this app. How likely each one is to work depends on its
-sensor:
+The app identifies the connected mouse from a device list taken from OpenATK
+(`devices.json`), and adjusts the settings it offers to that mouse's sensor:
 
-| Sensor (DPI format) | Mice | What to expect |
-|---|---|---|
-| PAW3395 / PAW3950, like the MAD R | ~37 | Best chance: the same code paths as the tested mouse. |
-| PAW3950 Ultra | ~46 | The DPI format is in the code but untested. DPI is capped at 26000, below these sensors' maximum. |
-| PAW3955 | ~31 | DPI settings are greyed out, because these sensors store DPI elsewhere. Other settings may still work. |
-| Unknown | ~36 | Unknown. |
+| Sensor | Mice | DPI | Lift-off distance |
+|---|---|---|---|
+| PAW3395, like the MAD R | ~25 | up to 26000 | 1 / 2 mm |
+| PAW3950 | ~12 | up to 30000 | 0.7 / 1 / 2 mm |
+| PAW3950 Ultra | ~46 | up to 42000 | 0.7 to 1.7 mm in 0.1 mm steps |
+| PAW3955 | ~31 | greyed out: stored in a format the app can't read yet | 0.7 to 1.7 mm in 0.1 mm steps |
+| Unknown or not in the list | ~36 | greyed out | shown, not adjustable |
 
-All of them share these limits:
+The highest polling rate offered depends on the USB connection. Full-speed USB
+(all 1K dongles and most cables) tops out at 1000 Hz, and the app reads this from
+the system. 2K/4K/8K dongles unlock higher rates, capped at the rate in the
+dongle's name.
 
-- The polling rate menu only offers up to 1000 Hz, so 2K/4K/8K rates can't be set.
-- Only the first six buttons can be remapped.
+Sensor mode offers Basic and Competitive on every mouse. Competitive Max appears
+only on mice that ATK HUB offers it for, which depends on the mouse model and its
+firmware version.
+
+None of these mice except the MAD R have been tested with this app. The higher
+DPI ranges, the 0.7 mm and continuous lift-off settings, and polling rates above
+1000 Hz follow OpenATK's documentation, but they are untested. The lift-off and
+sensor mode values were cross-checked against ATK HUB 3.2.28's own code.
+
+Only the first six buttons can be remapped.
 
 If you try another mouse, make a backup first (☰ menu). Reports of what does and
 doesn't work are welcome as GitHub issues.
@@ -102,8 +113,12 @@ own web configurator.
 
 ## License
 
-- `atk.py` contains protocol tables and DPI codecs ported from OpenATK, so it is
-  under the MIT license. See `LICENSE-OpenATK`.
+- `atk.py` contains protocol tables and DPI codecs ported from OpenATK, and
+  `devices.json` is generated from OpenATK's device list. Both are under the MIT
+  license. See `LICENSE-OpenATK`.
+- The `competitive_max` table in `devices.json` is a snapshot of compatibility
+  data from ATK HUB's public configuration. It lists which mice and firmware
+  versions offer Competitive Max. It is not covered by the MIT license above.
 - Everything else is released into the public domain under CC0 1.0. See `LICENSE`.
 
 This project is not affiliated with VXE, ATK or Compx. Product names are used only

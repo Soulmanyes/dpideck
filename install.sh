@@ -66,7 +66,7 @@ sudo udevadm trigger --subsystem-match=hidraw
 
 say "Installing the app to $DEST"
 mkdir -p "$DEST" "$APPS" "$BIN"
-install -m 644 "$SRC/atk.py" "$DEST/"
+install -m 644 "$SRC/atk.py" "$SRC/devices.json" "$DEST/"
 install -m 755 "$SRC/app.py" "$DEST/"
 ln -sf "$DEST/app.py" "$BIN/$NAME"
 
