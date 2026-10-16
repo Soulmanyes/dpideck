@@ -21,8 +21,6 @@ import atk  # noqa: E402
 APP_ID = "local.atkmouse.Settings"
 CONFIG_DIR = os.path.expanduser("~/.config/atk-mouse")
 
-SENSOR_MODES = [(atk.SENSOR_BASIC, "Basic"), (atk.SENSOR_COMPETITIVE, "Competitive"),
-                (atk.SENSOR_COMPETITIVE_MAX, "Competitive Max")]
 # Fixed lift-off steps; the codes are not in ascending order
 LOD_LEVELS = {"levels": [(1, "1 mm"), (2, "2 mm")],
               "levels07": [(3, "0.7 mm"), (1, "1 mm"), (2, "2 mm")]}
@@ -143,11 +141,13 @@ class Window(Adw.ApplicationWindow):
         menu.append("Restore backup…", "win.restore")
         menu.append("Factory reset", "win.reset")
         header.pack_end(Gtk.MenuButton(icon_name="open-menu-symbolic", menu_model=menu))
+        self.actions = {}
         for name, cb in (("backup", self.on_backup), ("restore", self.on_restore),
                          ("reset", self.on_reset)):
             act = Gio.SimpleAction.new(name, None)
             act.connect("activate", cb)
             self.add_action(act)
+            self.actions[name] = act
 
         view.add_top_bar(header)
         self.banner = Adw.Banner(button_label="Retry")
@@ -206,7 +206,7 @@ class Window(Adw.ApplicationWindow):
         perf = Adw.PreferencesGroup(title="Sensor")
         self.rate = Choice("Polling rate", [(1000, "1000 Hz")],
                            lambda v, l: self.apply(lambda m: m.set_rate(v), f"Polling rate {l}"))
-        self.mode = Choice("Sensor mode", SENSOR_MODES,
+        self.mode = Choice("Sensor mode", [(0, "Basic")],
                            lambda v, l: self.apply(lambda m: m.set_sensor_mode(v), f"Sensor mode: {l}"),
                            subtitle="Competitive modes use more battery")
         self.lod = Choice("Lift-off distance", LOD_LEVELS["levels"],
@@ -278,7 +278,7 @@ class Window(Adw.ApplicationWindow):
                 self.mouse.close()
             self.mouse = None
             self.nodes = atk.find_nodes()
-            m = atk.Mouse()
+            m = atk.open_mouse()
             self.mouse = m
             return m.read_state()   # waits a few seconds for a sleeping mouse
 
@@ -316,7 +316,7 @@ class Window(Adw.ApplicationWindow):
         self.state = s
         self.banner.set_revealed(False)
         self.page.set_sensitive(True)
-        link = "cable" if self.mouse.pid not in atk.DONGLE_PIDS else "wireless"
+        link = "wireless" if self.mouse.receiver else "cable"
         bat = s.get("battery")
         sub = f"{link}"
         if bat:
@@ -333,9 +333,15 @@ class Window(Adw.ApplicationWindow):
             if s["stages"] is not None else
             "This mouse stores DPI in a format the app can't read yet.")
         self.stage_count.set_value(s["stage_count"])
+        self.stage_count.set_sensitive(caps["stage_count_editable"])
         for i, row in enumerate(self.stage_rows):
-            row.get_adjustment().set_upper(caps["max_dpi"])
-            row.set_subtitle(f"Click the number to type a value (50–{caps['max_dpi']})")
+            adj = row.get_adjustment()
+            adj.set_lower(caps["min_dpi"])
+            adj.set_upper(caps["max_dpi"])
+            adj.set_step_increment(caps["dpi_step"])
+            row.set_snap_to_ticks(False)   # stepped ranges: atk.snap_dpi rounds instead
+            row.set_subtitle(f"Click the number to type a value "
+                             f"({caps['min_dpi']}–{caps['max_dpi']})")
             if s["stages"] is not None:
                 row.set_value(min(s["stages"][i], caps["max_dpi"]))
             row.set_visible(i < s["stage_count"])
@@ -343,16 +349,20 @@ class Window(Adw.ApplicationWindow):
         self.active.set(s["active_stage"])
         self.rate.limit([(hz, f"{hz} Hz") for hz in caps["rates"]])
         self.rate.set(s["rate_hz"])
-        self.mode.limit(SENSOR_MODES if caps["competitive_max"] else SENSOR_MODES[:2])
+        self.mode.limit(caps["sensor_modes"])
         self.mode.set(s["sensor_mode"])
+        self.debounce.limit(DEBOUNCE if caps["debounce_off"] else DEBOUNCE[1:])
+        # backups are raw EEPROM dumps, which only COMPX mice have
+        self.actions["backup"].set_enabled(caps["backup"])
+        self.actions["restore"].set_enabled(caps["backup"])
         self.lod.row.set_visible(caps["lod"] in LOD_LEVELS)
         self.lod_mm.set_visible(caps["lod"] == "continuous")
-        self.lod_raw.set_visible(caps["lod"] is None)
+        self.lod_raw.set_visible(False)   # ATK HUB shows no lift-off control then either
         if caps["lod"] in LOD_LEVELS:
             self.lod.limit(LOD_LEVELS[caps["lod"]])
             self.lod.set(s["lod_code"])
         elif caps["lod"] == "continuous":
-            self.lod_mm.set_value(atk.Mouse.lod_code_to_mm(s["lod_code"]))
+            self.lod_mm.set_value(atk.lod_code_to_mm(s["lod_code"]))
         else:
             self.lod_raw_value.set_label(f"code {s['lod_code']}")
         self.debounce.set(s["debounce_ms"])
@@ -406,6 +416,8 @@ class Window(Adw.ApplicationWindow):
         def fire():
             del self.dpi_timers[i]
             dpi = int(row.get_value())
+            if self.state:
+                dpi = atk.snap_dpi(dpi, self.state["caps"])
 
             def stored(value):
                 # show what the mouse really stored; high DPI rounds to coarser steps
@@ -426,7 +438,7 @@ class Window(Adw.ApplicationWindow):
         def fire():
             self.lod_timer = None
             mm = round(row.get_value(), 1)
-            code = atk.Mouse.lod_mm_to_code(mm)
+            code = atk.lod_mm_to_code(mm)
             self.apply(lambda m: m.set_lod(code), f"Lift-off distance {mm} mm")
             return False
         self.lod_timer = GLib.timeout_add(300, fire)

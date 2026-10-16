@@ -6,13 +6,13 @@ which browser you use. It works over the 2.4 GHz dongle and over the USB cable.
 
 What it can change:
 
-- DPI: 1 to 8 stages, 50 to 26000 DPI, plus the active stage
-- polling rate (125 to 1000 Hz)
+- DPI: 1 to 8 stages, up to 50000 DPI depending on the sensor, plus the active stage
+- polling rate, from 125 Hz up to 8000 Hz depending on the connection
 - sensor mode, lift-off distance, motion sync, angle snapping, ripple control
 - click debounce and sleep timer
 - button mapping: clicks, back/forward, DPI cycle/up/down, scrolling, disabled
 
-It can also save and restore a backup, and do a factory reset.
+It can also do a factory reset, and save and restore a backup (COMPX mice only).
 
 ## Install
 
@@ -53,37 +53,28 @@ and they work on Windows and other computers too.
   button to **DPI cycle**.
 - `python3 atk.py` prints all current settings in the terminal.
 
-## Tested
+## Supported mice
 
-Tested only on a **VXE MAD R** (firmware 3.00), over the 1K dongle and over the
-cable.
+ATK-made mice (VXE, ATK, Dragonfly and others) use one of two protocols, **COMPX**
+and **BITMOUSE**. Which one depends on the mouse's hardware revision, not its model
+name. The app supports both and picks the right one when the mouse is plugged in.
 
-- **Confirmed on the mouse:** polling rate, DPI stage values, number of stages,
-  button mapping, backup and restore.
-- **Not yet confirmed on hardware:** sensor mode, debounce, sleep timer, the three
-  switches, factory reset. These use the same write-and-check path as the
-  confirmed settings, so a failure shows up as "Not saved".
-- **Lift-off distance:** the mouse stores a 0.7 mm setting, but it made no
-  noticeable difference, so the app offers only 1 mm and 2 mm.
+It identifies the mouse and its sensor from ATK HUB's own list of about 230 mice.
+That list isn't part of this project: the app downloads it from ATK HUB the first
+time it runs (see Privacy). It then offers what ATK HUB offers for that sensor:
 
-## Other mice
+| Sensor | DPI | Lift-off distance |
+|---|---|---|
+| PAW3395 / 3395 Ultra, like the MAD R | 100 to 30000 | 1 / 2 mm |
+| PAW3950 / 3950DM | 50 to 36000 | 1 / 2 mm, plus 0.7 mm on COMPX mice |
+| PAW3950 Ultra | 10 to 42000 | 0.7 to 1.7 mm in 0.1 mm steps |
+| PAW3955 | 1 to 50000 | 0.7 to 1.7 mm in 0.1 mm steps |
+| CORE26K | 50 to 26000 | 1 / 2 mm |
+| PAW3395SE | 200 to 18000 (10000 on COMPX mice) | 1 / 2 mm |
+| PAW3311 / PAW3315 | 200 to 15000 / 16000 (10000 on COMPX mice) | none |
 
-ATK-made mice (VXE, ATK, Dragonfly and others) use one of two protocols. Which
-one depends on the mouse's hardware revision, not its model name. This app
-supports only **COMPX**. It detects the protocol when the mouse is plugged in, and
-tells you if a mouse uses the other one (**BITMOUSE**). For those mice, use
-[OpenATK](https://github.com/SunnybeeXD/OpenATK) in Chrome or Chromium.
-
-The app identifies the connected mouse from a device list taken from OpenATK
-(`devices.json`), and adjusts the settings it offers to that mouse's sensor:
-
-| Sensor | Mice | DPI | Lift-off distance |
-|---|---|---|---|
-| PAW3395, like the MAD R | ~25 | up to 26000 | 1 / 2 mm |
-| PAW3950 | ~12 | up to 30000 | 0.7 / 1 / 2 mm |
-| PAW3950 Ultra | ~46 | up to 42000 | 0.7 to 1.7 mm in 0.1 mm steps |
-| PAW3955 | ~31 | greyed out: stored in a format the app can't read yet | 0.7 to 1.7 mm in 0.1 mm steps |
-| Unknown or not in the list | ~36 | greyed out | shown, not adjustable |
+On COMPX mice with the PAW3395SE, PAW3311 or PAW3315, DPI stops at 10000, because
+ATK HUB's own code can't store higher values for them.
 
 The highest polling rate offered depends on the USB connection. Full-speed USB
 (all 1K dongles and most cables) tops out at 1000 Hz, and the app reads this from
@@ -91,42 +82,65 @@ the system. 2K/4K/8K dongles unlock higher rates, capped at the rate in the
 dongle's name.
 
 Sensor mode offers Basic and Competitive on every mouse. Competitive Max appears
-only on mice that ATK HUB offers it for, which depends on the mouse model and its
-firmware version. The app reads that list from ATK's server (see Privacy).
-
-None of these mice except the MAD R have been tested with this app. The higher
-DPI ranges, the 0.7 mm and continuous lift-off settings, and polling rates above
-1000 Hz follow OpenATK's documentation, but they are untested. The lift-off and
-sensor mode values were cross-checked against ATK HUB 3.2.28's own code.
+only where ATK HUB offers it: on COMPX mice it depends on the model and firmware
+version (the app reads that list from ATK's server, see Privacy), and on BITMOUSE
+mice on the model.
 
 Only the first six buttons can be remapped.
 
-If you try another mouse, make a backup first (☰ menu). Reports of what does and
-doesn't work are welcome as GitHub issues.
+## Tested
+
+- **VXE MAD R (COMPX, PAW3395, firmware 3.00)**, over the 1K dongle and the cable:
+  polling rate, DPI stage values up to 30000, number of stages, button mapping,
+  sensor mode, backup and restore are confirmed. Debounce, sleep timer, the three
+  switches and factory reset use the same write-and-check path, so a failure shows
+  up as "Not saved". The mouse stores 0.7 mm lift-off, but it made no noticeable
+  difference, which matches ATK HUB offering only 1 and 2 mm on this sensor.
+- **Every other mouse is untested**, including all BITMOUSE mice. The encodings
+  follow ATK HUB 3.2.28's own code and OpenATK's documentation, and were checked
+  against a simulated mouse, but not against real hardware. On BITMOUSE mice,
+  backup and restore aren't available, and the number of DPI stages is shown but
+  can't be changed, because how ATK HUB changes it there isn't known.
+
+If you try another mouse:
+
+1. Run `python3 atk.py` in the folder. It only reads, and prints what the app
+   sees. A COMPX mouse can also be backed up from the ☰ menu.
+2. Change one setting in the app, such as the polling rate, and change it back.
+3. Report what does and doesn't work as a GitHub issue, with the output of step 1.
 
 ## Privacy
 
-The app makes exactly one kind of network request. It downloads ATK's public list of
-which mice support Competitive Max from
-`https://bpcdn.atkgear.com/device/constant/mouse-upgrade.json`. This happens the
-first time a mouse connects, and then at most once a week. The request sends no
-information about you or your mouse. As with any download, ATK's server sees your
-IP address. The list is cached in `~/.config/atk-mouse/`. If the app can't
-download it and has no cached copy, it hides Competitive Max (unless the mouse is
-already set to it). Everything else works offline.
+The app talks to ATK's servers for two things, and sends no information about you
+or your mouse either time. As with any download, ATK's servers see your IP address.
+
+- **The list of mice.** The installer, and later the app at most once every 30
+  days, downloads ATK HUB's public web app from `hub.atk.pro` and
+  `bpcdn.atkgear.com` (about 13 MB) and reads the list of mice and sensors out of
+  it. The JavaScript is only read as text, never run. The list is cached in
+  `~/.config/atk-mouse/devices.json`.
+- **Which mice offer Competitive Max.** The app downloads
+  `https://bpcdn.atkgear.com/device/constant/mouse-upgrade.json` the first time a
+  mouse connects, then at most once a week, and caches it in the same folder.
+
+Without a connection the app uses its cached copies. If it has never been able
+to download the list, it can't tell which sensor a mouse has: DPI is then greyed
+out on COMPX mice and Competitive Max is hidden, but every other setting works.
+`python3 atk.py --update-devices` downloads the list again.
 
 ## How it works
 
-The app talks to the mouse through Linux `hidraw`, with the same 16-byte vendor
-reports the ATK HUB website sends over WebHID. The protocol details come from
+The app talks to the mouse through Linux `hidraw`, with the same vendor reports the
+ATK HUB website sends over WebHID. The protocol details come from
 [OpenATK](https://github.com/SunnybeeXD/OpenATK), which documents them from ATK's
-own web configurator.
+own web configurator, and were cross-checked against ATK HUB 3.2.28's own code.
 
 ## License
 
-- `atk.py` contains protocol tables and DPI codecs ported from OpenATK, and
-  `devices.json` is generated from OpenATK's device list. Both are under the MIT
-  license. See `LICENSE-OpenATK`.
+- `atk.py` contains protocol tables and DPI codecs ported from OpenATK, so it is
+  under the MIT license. See `LICENSE-OpenATK`.
+- No data from ATK is included. The list of mice is downloaded from ATK HUB by
+  each user's own copy of the app.
 - Everything else is released into the public domain under CC0 1.0. See `LICENSE`.
 
 This project is not affiliated with VXE, ATK or Compx. Product names are used only

@@ -1,2 +1,4 @@
-# Let the logged-in user talk to ATK/VXE mice (vendor 373b) without root.
+# Let the logged-in user talk to ATK/VXE mice without root.
+# 373b: ATK / VXE, 3554: first-generation VXE R1 family.
 SUBSYSTEM=="hidraw", ATTRS{idVendor}=="373b", TAG+="uaccess"
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="3554", TAG+="uaccess"

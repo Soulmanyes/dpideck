@@ -66,9 +66,14 @@ sudo udevadm trigger --subsystem-match=hidraw
 
 say "Installing the app to $DEST"
 mkdir -p "$DEST" "$APPS" "$BIN"
-install -m 644 "$SRC/atk.py" "$SRC/devices.json" "$DEST/"
+install -m 644 "$SRC/atk.py" "$DEST/"
 install -m 755 "$SRC/app.py" "$DEST/"
+rm -f "$DEST/devices.json"    # older versions shipped this; it is now downloaded
 ln -sf "$DEST/app.py" "$BIN/$NAME"
+
+say "Downloading the list of ATK mice from ATK HUB"
+python3 "$DEST/atk.py" --update-devices ||
+    echo "Couldn't download it now. The app will try again when it starts."
 
 cat > "$APPS/$NAME.desktop" <<EOF
 [Desktop Entry]
