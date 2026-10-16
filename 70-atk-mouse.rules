@@ -1,0 +1,2 @@
+# Let the logged-in user talk to ATK/VXE mice (vendor 373b) without root.
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="373b", TAG+="uaccess"

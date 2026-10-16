@@ -1,0 +1,85 @@
+#!/bin/sh
+# Installs Mouse Settings for the current user.
+#   - installs Python/GTK 4/libadwaita if missing (asks for your password)
+#   - installs a udev rule so the app can talk to the mouse without root
+#   - copies the app to ~/.local/share/vxe-atk and adds a launcher
+# Run ./install.sh --uninstall to remove it again.
+set -eu
+
+NAME=vxe-atk
+SRC=$(cd "$(dirname "$0")" && pwd)
+DEST=${XDG_DATA_HOME:-$HOME/.local/share}/$NAME
+APPS=${XDG_DATA_HOME:-$HOME/.local/share}/applications
+BIN=$HOME/.local/bin
+RULE=/etc/udev/rules.d/70-atk-mouse.rules
+
+say() { printf '\033[1m==> %s\033[0m\n' "$*"; }
+
+if [ "${1:-}" = "--uninstall" ]; then
+    say "Removing Mouse Settings"
+    rm -rf "$DEST" "$APPS/$NAME.desktop" "$BIN/$NAME"
+    if [ -e "$RULE" ]; then
+        sudo rm -f "$RULE"
+        sudo udevadm control --reload
+    fi
+    say "Done. Your settings stay on the mouse."
+    exit 0
+fi
+
+have_deps() {
+    python3 - <<'EOF' 2>/dev/null
+import gi
+gi.require_version("Gtk", "4.0")
+gi.require_version("Adw", "1")
+from gi.repository import Adw
+assert (Adw.get_major_version(), Adw.get_minor_version()) >= (1, 5)
+EOF
+}
+
+if ! have_deps; then
+    say "Installing Python, GTK 4 and libadwaita"
+    if command -v pacman >/dev/null; then
+        sudo pacman -S --needed --noconfirm python python-gobject gtk4 libadwaita
+    elif command -v apt-get >/dev/null; then
+        sudo apt-get update
+        sudo apt-get install -y python3 python3-gi gir1.2-gtk-4.0 gir1.2-adw-1
+    elif command -v dnf >/dev/null; then
+        sudo dnf install -y python3 python3-gobject gtk4 libadwaita
+    elif command -v zypper >/dev/null; then
+        sudo zypper --non-interactive install python3 python3-gobject python3-gobject-Gdk \
+            typelib-1_0-Gtk-4_0 typelib-1_0-Adw-1
+    else
+        echo "Unknown package manager. Install Python 3, PyGObject, GTK 4 and" >&2
+        echo "libadwaita 1.5 or newer yourself, then run this script again." >&2
+        exit 1
+    fi
+    if ! have_deps; then
+        echo "libadwaita 1.5 or newer is needed, but your system has an older one." >&2
+        exit 1
+    fi
+fi
+
+say "Allowing your user to access ATK/VXE mice (udev rule)"
+sudo install -m 644 "$SRC/70-atk-mouse.rules" "$RULE"
+sudo udevadm control --reload
+sudo udevadm trigger --subsystem-match=hidraw
+
+say "Installing the app to $DEST"
+mkdir -p "$DEST" "$APPS" "$BIN"
+install -m 644 "$SRC/atk.py" "$DEST/"
+install -m 755 "$SRC/app.py" "$DEST/"
+ln -sf "$DEST/app.py" "$BIN/$NAME"
+
+cat > "$APPS/$NAME.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=Mouse Settings
+Comment=DPI, polling rate and buttons for ATK / VXE mice
+Exec=python3 $DEST/app.py
+Icon=input-mouse
+Categories=Settings;HardwareSettings;
+Keywords=mouse;dpi;vxe;atk;
+EOF
+
+say "Done. Open \"Mouse Settings\" from your app menu, or run: $NAME"
+echo "If the mouse is not found, unplug it (or its dongle) and plug it back in."
