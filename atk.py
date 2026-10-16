@@ -16,6 +16,7 @@ import os
 import re
 import select
 import time
+import urllib.request
 
 VID = 0x373B
 REPORT_ID = 8
@@ -52,6 +53,44 @@ RATES_REV = {v: k for k, v in RATES.items()}
 # Flags: A/B/M/X = DPI format, u = continuous lift-off, 7 = 0.7 mm step, r = receiver.
 with open(os.path.join(os.path.dirname(os.path.realpath(__file__)), "devices.json")) as _f:
     REGISTRY = json.load(_f)
+
+# ATK HUB's public config listing, per COMPX mouse ("cid,mid"), the lowest
+# firmware that offers Competitive Max. Fetched on first need, cached, and
+# refreshed at most once a week; this is the app's only network request.
+UPGRADE_URL = "https://bpcdn.atkgear.com/device/constant/mouse-upgrade.json"
+UPGRADE_CACHE = os.path.expanduser("~/.config/atk-mouse/competitive-max.json")
+UPGRADE_MAX_AGE = 7 * 24 * 3600
+_upgrade_table = None
+
+
+def competitive_max_table():
+    """{"cid,mid": "min firmware"}; empty if never fetched and offline."""
+    global _upgrade_table
+    if _upgrade_table is not None:
+        return _upgrade_table
+    cached = None
+    try:
+        with open(UPGRADE_CACHE) as f:
+            cached = json.load(f)
+        if time.time() - cached["fetched"] < UPGRADE_MAX_AGE:
+            _upgrade_table = cached["table"]
+            return _upgrade_table
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    try:
+        with urllib.request.urlopen(UPGRADE_URL, timeout=3) as r:
+            compx = json.load(r)["3"]
+        table = {k: v["cordedMode"] for k, v in compx.items()
+                 if isinstance(v, dict) and "cordedMode" in v}
+        os.makedirs(os.path.dirname(UPGRADE_CACHE), exist_ok=True)
+        with open(UPGRADE_CACHE, "w") as f:
+            json.dump({"fetched": time.time(), "table": table}, f)
+        _upgrade_table = table
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        # offline or ATK changed the file: use a stale copy, else show no Competitive Max
+        _upgrade_table = cached["table"] if cached and "table" in cached else {}
+    return _upgrade_table
+
 
 # Mice with a sixth button slot in firmware but no physical button (VXE MAD R)
 NO_DPI_BUTTON = {"cid": {"2,49"}, "pid": {0x103F}}
@@ -371,7 +410,7 @@ class Mouse:
             return False
         if key.split(",")[0] == "1":
             return True
-        need = REGISTRY.get("competitive_max", {}).get(key)
+        need = competitive_max_table().get(key)
         try:
             return bool(need) and float(version) >= float(need)
         except (TypeError, ValueError):

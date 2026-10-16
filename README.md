@@ -92,7 +92,7 @@ dongle's name.
 
 Sensor mode offers Basic and Competitive on every mouse. Competitive Max appears
 only on mice that ATK HUB offers it for, which depends on the mouse model and its
-firmware version.
+firmware version. The app reads that list from ATK's server (see Privacy).
 
 None of these mice except the MAD R have been tested with this app. The higher
 DPI ranges, the 0.7 mm and continuous lift-off settings, and polling rates above
@@ -103,6 +103,17 @@ Only the first six buttons can be remapped.
 
 If you try another mouse, make a backup first (☰ menu). Reports of what does and
 doesn't work are welcome as GitHub issues.
+
+## Privacy
+
+The app makes exactly one kind of network request. It downloads ATK's public list of
+which mice support Competitive Max from
+`https://bpcdn.atkgear.com/device/constant/mouse-upgrade.json`. This happens the
+first time a mouse connects, and then at most once a week. The request sends no
+information about you or your mouse. As with any download, ATK's server sees your
+IP address. The list is cached in `~/.config/atk-mouse/`. If the app can't
+download it and has no cached copy, it hides Competitive Max (unless the mouse is
+already set to it). Everything else works offline.
 
 ## How it works
 
@@ -116,9 +127,6 @@ own web configurator.
 - `atk.py` contains protocol tables and DPI codecs ported from OpenATK, and
   `devices.json` is generated from OpenATK's device list. Both are under the MIT
   license. See `LICENSE-OpenATK`.
-- The `competitive_max` table in `devices.json` is a snapshot of compatibility
-  data from ATK HUB's public configuration. It lists which mice and firmware
-  versions offer Competitive Max. It is not covered by the MIT license above.
 - Everything else is released into the public domain under CC0 1.0. See `LICENSE`.
 
 This project is not affiliated with VXE, ATK or Compx. Product names are used only
