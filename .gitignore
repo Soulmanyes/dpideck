@@ -1,1 +1,4 @@
 __pycache__/
+windows/*.exe
+windows/*.zip
+windows/*.syso

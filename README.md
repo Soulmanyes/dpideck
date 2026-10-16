@@ -14,7 +14,27 @@ What it can change:
 
 It can also do a factory reset, and save and restore a backup (COMPX mice only).
 
-## Install
+## Windows
+
+There is also a Windows version with the same features: download
+`MouseSettings-windows.zip` from the
+[Releases](https://github.com/Soulmanyes/vxe-atk-linux/releases) page, unzip it and
+run `MouseSettings.exe`. Nothing needs installing.
+
+- Windows may say "Windows protected your PC" because the app isn't signed. Click
+  "More info", then "Run anyway".
+- Its caches and backups are kept in `%AppData%\atk-mouse`.
+- Difference from Linux: Windows can't easily tell how fast a USB cable connection
+  is, so over a cable the app offers polling rates up to 1000 Hz (or the mouse's
+  current rate, if that is higher). Through a 2K/4K/8K receiver it offers up to
+  the receiver's rate.
+
+The Windows version is a separate program written in Go (`windows/`), built with
+`windows/build.sh`. It shares no code with the Linux version, but `PARITY.md`
+lists every behaviour both must have, and tests check that the two give the same
+answers.
+
+## Install (Linux)
 
 ```sh
 git clone https://github.com/Soulmanyes/vxe-atk-linux
@@ -137,8 +157,12 @@ own web configurator, and were cross-checked against ATK HUB 3.2.28's own code.
 
 ## License
 
-- `atk.py` contains protocol tables and DPI codecs ported from OpenATK, so it is
-  under the MIT license. See `LICENSE-OpenATK`.
+- `atk.py` and its Go port in `windows/core/` contain protocol tables and DPI
+  codecs ported from OpenATK, so they are under the MIT license. See
+  `LICENSE-OpenATK`.
+- The Windows build includes the Walk UI library, its dependencies and the Go
+  runtime (BSD and MIT licenses); their notices are in
+  `windows/THIRD_PARTY_LICENSES.txt` and in the release zip.
 - No data from ATK is included. The list of mice is downloaded from ATK HUB by
   each user's own copy of the app.
 - Everything else is released into the public domain under CC0 1.0. See `LICENSE`.
