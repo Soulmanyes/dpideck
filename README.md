@@ -1,8 +1,11 @@
-# Mouse Settings for ATK / VXE mice on Linux
+# DPIdeck
 
-A small desktop app for changing the settings of a **VXE MAD R** (and probably other
-ATK / VXE mice) on Linux. You don't need the ATK HUB website, so it works no matter
-which browser you use. It works over the 2.4 GHz dongle and over the USB cable.
+Settings for ATK / VXE mice on Linux and Windows.
+
+A small desktop app for changing the settings of ATK / VXE mice, such as the
+**VXE MAD R**, on Linux and Windows. You don't need the ATK HUB website, so it works
+no matter which browser you use. It works over the 2.4 GHz dongle and over the USB
+cable.
 
 What it can change:
 
@@ -17,13 +20,13 @@ It can also do a factory reset, and save and restore a backup (COMPX mice only).
 ## Windows
 
 There is also a Windows version with the same features: download
-`MouseSettings-windows.zip` from the
-[Releases](https://github.com/Soulmanyes/vxe-atk-linux/releases) page, unzip it and
-run `MouseSettings.exe`. Nothing needs installing.
+`DPIdeck-windows.zip` from the
+[Releases](https://github.com/Soulmanyes/dpideck/releases) page, unzip it and
+run `DPIdeck.exe`. Nothing needs installing.
 
 - Windows may say "Windows protected your PC" because the app isn't signed. Click
   "More info", then "Run anyway".
-- Its caches and backups are kept in `%AppData%\atk-mouse`.
+- Its caches and backups are kept in `%AppData%\dpideck`.
 - Difference from Linux: Windows can't easily tell how fast a USB cable connection
   is, so over a cable the app offers polling rates up to 1000 Hz (or the mouse's
   current rate, if that is higher). Through a 2K/4K/8K receiver it offers up to
@@ -37,8 +40,8 @@ answers.
 ## Install (Linux)
 
 ```sh
-git clone https://github.com/Soulmanyes/vxe-atk-linux
-cd vxe-atk-linux
+git clone https://github.com/Soulmanyes/dpideck
+cd dpideck
 ./install.sh
 ```
 
@@ -48,8 +51,8 @@ The script asks for your password once. It uses it to:
    Fedora and openSUSE are handled automatically);
 2. add a udev rule, so the app can talk to the mouse without root.
 
-The script installs the app for your user only. Afterwards, open **Mouse Settings**
-from your app menu, or run `vxe-atk` in a terminal. If the mouse is not found,
+The script installs the app for your user only. Afterwards, open **DPIdeck**
+from your app menu, or run `dpideck` in a terminal. If the mouse is not found,
 unplug the mouse or its dongle and plug it back in.
 
 To remove it:
@@ -138,7 +141,7 @@ or your mouse either time. As with any download, ATK's servers see your IP addre
   days, downloads ATK HUB's public web app from `hub.atk.pro` and
   `bpcdn.atkgear.com` (about 13 MB) and reads the list of mice and sensors out of
   it. The JavaScript is only read as text, never run. The list is cached in
-  `~/.config/atk-mouse/devices.json`.
+  `~/.config/dpideck/devices.json`.
 - **Which mice offer Competitive Max.** The app downloads
   `https://bpcdn.atkgear.com/device/constant/mouse-upgrade.json` the first time a
   mouse connects, then at most once a week, and caches it in the same folder.

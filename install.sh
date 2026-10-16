@@ -1,25 +1,26 @@
 #!/bin/sh
-# Installs Mouse Settings for the current user.
+# Installs DPIdeck for the current user.
 #   - installs Python/GTK 4/libadwaita if missing (asks for your password)
 #   - installs a udev rule so the app can talk to the mouse without root
-#   - copies the app to ~/.local/share/vxe-atk and adds a launcher
+#   - copies the app to ~/.local/share/dpideck and adds a launcher
 # Run ./install.sh --uninstall to remove it again.
 set -eu
 
-NAME=vxe-atk
+NAME=dpideck
 SRC=$(cd "$(dirname "$0")" && pwd)
 DEST=${XDG_DATA_HOME:-$HOME/.local/share}/$NAME
 APPS=${XDG_DATA_HOME:-$HOME/.local/share}/applications
 BIN=$HOME/.local/bin
-RULE=/etc/udev/rules.d/70-atk-mouse.rules
+RULE=/etc/udev/rules.d/70-dpideck.rules
+OLD_RULE=/etc/udev/rules.d/70-atk-mouse.rules   # before the rename to DPIdeck
 
 say() { printf '\033[1m==> %s\033[0m\n' "$*"; }
 
 if [ "${1:-}" = "--uninstall" ]; then
-    say "Removing Mouse Settings"
+    say "Removing DPIdeck"
     rm -rf "$DEST" "$APPS/$NAME.desktop" "$BIN/$NAME"
-    if [ -e "$RULE" ]; then
-        sudo rm -f "$RULE"
+    if [ -e "$RULE" ] || [ -e "$OLD_RULE" ]; then
+        sudo rm -f "$RULE" "$OLD_RULE"
         sudo udevadm control --reload
     fi
     say "Done. Your settings stay on the mouse."
@@ -60,9 +61,14 @@ if ! have_deps; then
 fi
 
 say "Allowing your user to access ATK/VXE mice (udev rule)"
-sudo install -m 644 "$SRC/70-atk-mouse.rules" "$RULE"
+sudo install -m 644 "$SRC/70-dpideck.rules" "$RULE"
+sudo rm -f "$OLD_RULE"
 sudo udevadm control --reload
 sudo udevadm trigger --subsystem-match=hidraw
+
+# remove an install from before the rename (it was called vxe-atk)
+OLD=${XDG_DATA_HOME:-$HOME/.local/share}/vxe-atk
+rm -rf "$OLD" "$APPS/vxe-atk.desktop" "$BIN/vxe-atk"
 
 say "Installing the app to $DEST"
 mkdir -p "$DEST" "$APPS" "$BIN"
@@ -78,7 +84,7 @@ python3 "$DEST/atk.py" --update-devices ||
 cat > "$APPS/$NAME.desktop" <<EOF
 [Desktop Entry]
 Type=Application
-Name=Mouse Settings
+Name=DPIdeck
 Comment=DPI, polling rate and buttons for ATK / VXE mice
 Exec=python3 $DEST/app.py
 Icon=input-mouse
@@ -86,5 +92,5 @@ Categories=Settings;HardwareSettings;
 Keywords=mouse;dpi;vxe;atk;
 EOF
 
-say "Done. Open \"Mouse Settings\" from your app menu, or run: $NAME"
+say "Done. Open \"DPIdeck\" from your app menu, or run: $NAME"
 echo "If the mouse is not found, unplug it (or its dongle) and plug it back in."

@@ -1,8 +1,8 @@
 package main
 
-import "vxeatk/core"
+import "dpideck/core"
 
-// demoMouse is a simulated VXE MAD R for `MouseSettings.exe -demo`, so the
+// demoMouse is a simulated VXE MAD R for `DPIdeck.exe -demo`, so the
 // window can be checked without a mouse. Writes only change this copy.
 type demoMouse struct{ s core.State }
 

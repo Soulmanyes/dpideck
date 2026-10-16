@@ -312,13 +312,20 @@ func FetchRegistry() (*Registry, error) {
 	return reg, nil
 }
 
-// ConfigDir: %AppData%\atk-mouse on Windows, ~/.config/atk-mouse on Linux.
+// ConfigDir: %AppData%\dpideck on Windows, ~/.config/dpideck on Linux. A folder
+// from before the rename (atk-mouse) is moved over once, keeping caches and backups.
 func ConfigDir() string {
 	d, err := os.UserConfigDir()
 	if err != nil {
 		d = "."
 	}
-	return filepath.Join(d, "atk-mouse")
+	dir := filepath.Join(d, "dpideck")
+	if _, err := os.Stat(dir); os.IsNotExist(err) {
+		if st, err := os.Stat(filepath.Join(d, "atk-mouse")); err == nil && st.IsDir() {
+			os.Rename(filepath.Join(d, "atk-mouse"), dir)
+		}
+	}
+	return dir
 }
 
 type cacheFile[T any] struct {

@@ -1,4 +1,4 @@
-module vxeatk
+module dpideck
 
 go 1.27.1
 

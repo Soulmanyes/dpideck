@@ -2,8 +2,8 @@
   "RT_MANIFEST": {
     "#1": {
       "0409": {
-        "identity": {"name": "MouseSettings", "version": "1.0.0.0"},
-        "description": "Mouse Settings for ATK / VXE mice",
+        "identity": {"name": "DPIdeck", "version": "1.0.0.0"},
+        "description": "DPIdeck: settings for ATK / VXE mice",
         "minimum-os": "win7",
         "execution-level": "as invoker",
         "dpi-awareness": "per monitor v2",
@@ -15,8 +15,8 @@
     "#1": {
       "0000": {
         "fixed": {"file_version": "1.0.0.0", "product_version": "1.0.0.0"},
-        "info": {"0409": {"FileDescription": "Mouse Settings for ATK / VXE mice", "ProductName": "Mouse Settings",
-                          "FileVersion": "1.0.0", "ProductVersion": "1.0.0", "OriginalFilename": "MouseSettings.exe"}}
+        "info": {"0409": {"FileDescription": "DPIdeck: settings for ATK / VXE mice", "ProductName": "DPIdeck",
+                          "FileVersion": "1.0.0", "ProductVersion": "1.0.0", "OriginalFilename": "DPIdeck.exe"}}
       }
     }
   }

@@ -12,7 +12,7 @@ import (
 	"time"
 	"unsafe"
 
-	"vxeatk/core"
+	"dpideck/core"
 )
 
 var (

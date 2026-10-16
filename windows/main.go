@@ -1,4 +1,4 @@
-// Mouse Settings for Windows: the native counterpart of app.py (Linux).
+// DPIdeck for Windows: the native counterpart of app.py (Linux).
 // Keep the two in step; see PARITY.md.
 package main
 
@@ -15,7 +15,7 @@ import (
 	. "github.com/lxn/walk/declarative"
 	"github.com/lxn/win"
 
-	"vxeatk/core"
+	"dpideck/core"
 )
 
 type opt struct{ key, label string }
@@ -505,7 +505,7 @@ func (a *app) buildUI() error {
 
 	err := MainWindow{
 		AssignTo: &a.mw,
-		Title:    "Mouse Settings",
+		Title:    "DPIdeck",
 		MinSize:  Size{Width: 520, Height: 500},
 		Size:     Size{Width: 560, Height: 760},
 		Layout:   VBox{},
@@ -523,7 +523,7 @@ func (a *app) buildUI() error {
 		Children: []Widget{
 			Composite{Layout: HBox{MarginsZero: true}, Children: []Widget{
 				Composite{Layout: VBox{MarginsZero: true, SpacingZero: true}, Children: []Widget{
-					Label{AssignTo: &a.title, Text: "Mouse Settings", Font: Font{PointSize: 12, Bold: true}},
+					Label{AssignTo: &a.title, Text: "DPIdeck", Font: Font{PointSize: 12, Bold: true}},
 					Label{AssignTo: &a.sub, Text: "Looking for the mouse…"},
 				}},
 				HSpacer{},
@@ -669,7 +669,7 @@ func (a *app) onReset() {
 	})
 }
 
-// dump: hidden check mode, `vxe-atk.exe -dump file.json`, writes what the app reads.
+// dump: hidden check mode, `DPIdeck.exe -dump file.json`, writes what the app reads.
 func dump(path string) {
 	out := map[string]any{}
 	reg := core.GetRegistry(false)
@@ -703,7 +703,7 @@ func main() {
 		}
 	}()
 	if err := a.buildUI(); err != nil {
-		walk.MsgBox(nil, "Mouse Settings", err.Error(), walk.MsgBoxIconError)
+		walk.MsgBox(nil, "DPIdeck", err.Error(), walk.MsgBoxIconError)
 		return
 	}
 	a.connect()

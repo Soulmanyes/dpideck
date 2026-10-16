@@ -1,7 +1,7 @@
-Third-party licenses for MouseSettings.exe
-==========================================
+Third-party licenses for DPIdeck.exe
+====================================
 
-The Windows build of Mouse Settings includes the following software.
+The Windows build of DPIdeck includes the following software.
 
 ----------------------------------------------------------------------
 github.com/lxn/walk

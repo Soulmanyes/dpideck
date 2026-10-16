@@ -29,7 +29,13 @@ import urllib.request
 VIDS = (0x373B, 0x3554)   # 0x3554: first-generation VXE R1 family
 REPORT_ID = 8
 
-CONFIG_DIR = os.path.expanduser("~/.config/atk-mouse")
+CONFIG_DIR = os.path.expanduser("~/.config/dpideck")
+_OLD_CONFIG_DIR = os.path.expanduser("~/.config/atk-mouse")    # before the rename to DPIdeck
+if os.path.isdir(_OLD_CONFIG_DIR) and not os.path.exists(CONFIG_DIR):
+    try:
+        os.rename(_OLD_CONFIG_DIR, CONFIG_DIR)     # keep caches and backups
+    except OSError:
+        pass
 
 # ---- device list --------------------------------------------------------------
 # Which sensor each mouse has comes from ATK HUB's own device tables. They are

@@ -18,8 +18,8 @@ from gi.repository import Adw, Gio, GLib, Gtk  # noqa: E402
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import atk  # noqa: E402
 
-APP_ID = "local.atkmouse.Settings"
-CONFIG_DIR = os.path.expanduser("~/.config/atk-mouse")
+APP_ID = "local.dpideck.DPIdeck"
+CONFIG_DIR = atk.CONFIG_DIR
 
 # Fixed lift-off steps; the codes are not in ascending order
 LOD_LEVELS = {"levels": [(1, "1 mm"), (2, "2 mm")],
@@ -115,7 +115,7 @@ class Choice:
 
 class Window(Adw.ApplicationWindow):
     def __init__(self, app):
-        super().__init__(application=app, title="Mouse Settings")
+        super().__init__(application=app, title="DPIdeck")
         self.set_default_size(560, 780)
         self.worker = Worker()
         self.mouse = None
@@ -129,7 +129,7 @@ class Window(Adw.ApplicationWindow):
         self.toasts = Adw.ToastOverlay()
         view = Adw.ToolbarView()
         header = Adw.HeaderBar()
-        self.title = Adw.WindowTitle(title="Mouse Settings", subtitle="Looking for mouse…")
+        self.title = Adw.WindowTitle(title="DPIdeck", subtitle="Looking for mouse…")
         header.set_title_widget(self.title)
 
         refresh = Gtk.Button(icon_name="view-refresh-symbolic", tooltip_text="Reload from mouse")
