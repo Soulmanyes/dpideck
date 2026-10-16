@@ -335,6 +335,7 @@ class Window(Adw.ApplicationWindow):
         self.stage_count.set_value(s["stage_count"])
         for i, row in enumerate(self.stage_rows):
             row.get_adjustment().set_upper(caps["max_dpi"])
+            row.set_subtitle(f"Click the number to type a value (50–{caps['max_dpi']})")
             if s["stages"] is not None:
                 row.set_value(min(s["stages"][i], caps["max_dpi"]))
             row.set_visible(i < s["stage_count"])
