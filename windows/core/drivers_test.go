@@ -78,6 +78,28 @@ func fakeCompx(cid, mid byte) (*fakeTransport, map[int]byte) {
 			r[5], r[6] = 3, 0
 		case cxBattery:
 			r[5] = 77
+		case cxMouseInfo:
+			r[9], r[10], r[11] = cid, mid, mem[-1] // link type
+		case cxGetLongRange:
+			r[5] = mem[-2]
+		case cxGetRxLight, cxGetRxSimple: // mem[-3] = 1: a receiver without a light
+			if mem[-3] == 1 {
+				r[1] = 1
+			}
+			base := map[byte]int{cxGetRxLight: -20, cxGetRxSimple: -30}[cmd]
+			for i := 0; i < 7; i++ {
+				r[5+i] = mem[base+i]
+			}
+		case cxSetRxLight, cxSetRxSimple:
+			if mem[-3] == 1 {
+				r[1] = 1
+			}
+			base := map[byte]int{cxSetRxLight: -20, cxSetRxSimple: -30}[cmd]
+			for i := 0; i < 7; i++ {
+				mem[base+i] = f[5+i]
+			}
+		case cxSetLongRange:
+			mem[-2] = f[5]
 		}
 		sum := 8
 		for _, v := range r[:15] {
@@ -135,6 +157,32 @@ func TestCompxMadR(t *testing.T) {
 	// refused commands never reach the mouse
 	if _, err := m.xfer(0x0D, 0, 0, nil); err == nil {
 		t.Fatal("upgrade command was allowed")
+	}
+	if _, err := m.xfer(cxMouseInfo, 0, 10, []byte{1, 2, 3, 4}); err == nil {
+		t.Fatal("0x01 was allowed in a form ATK HUB never sends")
+	}
+}
+
+func TestCompxRatesFollowLinkType(t *testing.T) {
+	upgrade = map[string]string{"2,49": "3.00"}
+	for _, c := range []struct{ link, top int }{{0, 1000}, {3, 8000}, {1, 4000}, {4, 2000}, {99, 8000}} {
+		ft, mem := fakeCompx(2, 49)
+		mem[-1] = byte(c.link)
+		m := &CompxMouse{T: ft, VID: 0x373B, PID: 0x103F, Reg: testRegistry()}
+		s, err := m.ReadState()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if top := s.Caps.Rates[len(s.Caps.Rates)-1]; top != c.top {
+			t.Fatalf("link %d: top rate %d, want %d", c.link, top, c.top)
+		}
+	}
+	// an 8K mouse already at 2000 Hz still offers 8000 Hz
+	ft, mem := fakeCompx(2, 49)
+	mem[-1], mem[0x00], mem[0x01] = 3, 0x10, 85-0x10
+	s, err := (&CompxMouse{T: ft, VID: 0x373B, PID: 0x103F, Reg: testRegistry()}).ReadState()
+	if err != nil || s.RateHz != 2000 || s.Caps.Rates[len(s.Caps.Rates)-1] != 8000 {
+		t.Fatalf("rates %v at %d Hz, %v", s.Caps.Rates, s.RateHz, err)
 	}
 }
 
@@ -196,6 +244,21 @@ func fakeBitmouse(answersTarget byte) (*fakeTransport, []byte, map[string]int) {
 			panic("bad BITMOUSE frame")
 		}
 		cmd, p := f[5], f[7:]
+		if cmd == bmGetRxLight || cmd == bmSetRxLight {
+			if f[4] != 0 { // the receiver answers, on target 0
+				return nil
+			}
+			if cmd == bmSetRxLight {
+				copy(mem[4000:4009], p[:9])
+			}
+			return append([]byte{0x72, 0, 0, 0, cmd, 9}, mem[4000:4009]...)
+		}
+		if cmd == bmGetLinkType {
+			if link, ok := cfg["link"]; ok && f[4] == 0 { // the receiver answers, on target 0
+				return []byte{0x72, 0, 0, 0, cmd, 1, byte(link)}
+			}
+			return nil
+		}
 		if f[4] != answersTarget && cmd != bmDongleVersion {
 			return nil // wrong target: silence
 		}
@@ -216,6 +279,10 @@ func fakeBitmouse(answersTarget byte) (*fakeTransport, []byte, map[string]int) {
 			return reply(append([]byte{p[0], p[1], p[2]}, mem[a:a+n]...)...)
 		case bmSetRate:
 			cfg["rate"] = int(p[0])
+		case bmSetLongRange:
+			mem[bmAddrLongRange] = p[0]
+		case bmSetLight:
+			copy(mem[bmAddrLight:], p[:3])
 		case bmSetLod:
 			cfg["lodoff"] = int(p[1])
 		case bmSetSleep:
@@ -286,6 +353,132 @@ func TestBitmousePhantom(t *testing.T) {
 	}
 	if _, err := m.xfer(0x82, 3, 0); err == nil {
 		t.Fatal("pairing was allowed")
+	}
+}
+
+func TestBitmouseRatesFollowLinkType(t *testing.T) {
+	// an 8K receiver (target 1 for the mouse, 0 for the link type), mouse at 2000 Hz
+	ft, _, cfg := fakeBitmouse(1)
+	cfg["link"], cfg["rate"] = 5, BmRates[2000]
+	m := NewBitMouse(ft, 0x373B, 0x12CF, testRegistry())
+	s, err := m.ReadState()
+	if err != nil || s.RateHz != 2000 || s.Caps.Rates[len(s.Caps.Rates)-1] != 8000 {
+		t.Fatalf("rates %v at %d Hz, %v", s.Caps.Rates, s.RateHz, err)
+	}
+	// a 4K receiver caps it at 4000 Hz although the name says 8K
+	ft, _, cfg = fakeBitmouse(1)
+	cfg["link"] = 1
+	s, err = NewBitMouse(ft, 0x373B, 0x12CF, testRegistry()).ReadState()
+	if err != nil || s.Caps.Rates[len(s.Caps.Rates)-1] != 4000 {
+		t.Fatalf("rates %v, %v", s.Caps.Rates, err)
+	}
+}
+
+func TestLongRange(t *testing.T) {
+	upgrade = map[string]string{"2,49": "3.00"}
+	ft, mem := fakeCompx(2, 49)
+	cx := &CompxMouse{T: ft, VID: 0x373B, PID: 0x103F, Reg: testRegistry()}
+	if s, err := cx.ReadState(); err != nil || s.LongRange == nil || *s.LongRange {
+		t.Fatal("COMPX long range should read as off", err)
+	}
+	if err := cx.SetLongRange(true); err != nil || mem[-2] != 1 {
+		t.Fatal("COMPX long range write", err)
+	}
+	reg := testRegistry()
+	reg.Compx.Cid["2,49"] = Entry{"MAD R", "PAW3395", []string{"noFarDistance"}}
+	cx = &CompxMouse{T: ft, VID: 0x373B, PID: 0x103F, Reg: reg}
+	if s, err := cx.ReadState(); err != nil || s.LongRange != nil {
+		t.Fatal("long range offered on a noFarDistance mouse", err)
+	}
+
+	fb, bmem, _ := fakeBitmouse(1)
+	bm := NewBitMouse(fb, 0x373B, 0x12CF, testRegistry())
+	bmem[bmAddrLongRange] = 1
+	if s, err := bm.ReadState(); err != nil || s.LongRange == nil || !*s.LongRange {
+		t.Fatal("BITMOUSE long range should read as on", err)
+	}
+	if err := bm.SetLongRange(false); err != nil || bmem[bmAddrLongRange] != 0 {
+		t.Fatal("BITMOUSE long range write", err)
+	}
+}
+
+func TestCompxLights(t *testing.T) {
+	upgrade = map[string]string{"2,49": "3.00"}
+	ft, mem := fakeCompx(2, 49)
+	for i, v := range []int{2, 83, 128, 213, 3, 82, 0, 85} { // MAD R as read: breathing, off
+		mem[0x4C+i] = byte(v)
+	}
+	for i, v := range []int{0, 0, 255, 86, 255, 0, 255, 87} {
+		mem[0x2C+i] = byte(v)
+	}
+	for i, v := range []int{3, 255, 0, 0, 5, 9, 10} { // receiver: steady red, medium, fast, 10 min
+		mem[-20+i] = byte(v)
+	}
+	m := &CompxMouse{T: ft, VID: 0x373B, PID: 0x104D, Receiver: true, Reg: testRegistry()}
+	s, err := m.ReadState()
+	if err != nil || *s.Light != (Light{"off", 1, 1}) || s.StageColors[0] != "#0000ff" || s.StageColors[1] != "#ff00ff" {
+		t.Fatalf("light %+v %v %v", s.Light, s.StageColors, err)
+	}
+	if *s.RxLight != (ReceiverLight{Kind: "full", Mode: 3, Color: "#ff0000", Brightness: 2, Speed: 1, Sleep: 2}) {
+		t.Fatalf("receiver light %+v", s.RxLight)
+	}
+	if err := m.SetLight(Light{"steady", 2, 0}); err != nil || mem[0x4C] != 1 || mem[0x4E] != 255 || mem[0x50] != 1 || mem[0x52] != 1 {
+		t.Fatal("light write", err)
+	}
+	if err := m.SetLight(Light{"off", 2, 0}); err != nil || mem[0x4C] != 1 || mem[0x52] != 0 {
+		t.Fatal("light off should keep the effect", err)
+	}
+	if err := m.SetStageColor(1, "#00ff00"); err != nil || mem[0x30] != 0 || mem[0x31] != 255 || mem[0x33] != 86 || mem[0x2E] != 255 {
+		t.Fatal("stage colour", err)
+	}
+	if err := m.SetReceiverLight(ReceiverLight{Kind: "full", Mode: 2, Color: "#123456", Brightness: 0, Speed: 2, Sleep: 0}); err != nil ||
+		mem[-20] != 2 || mem[-19] != 0x12 || mem[-16] != 9 || mem[-15] != 0 || mem[-14] != 1 {
+		t.Fatal("receiver light write", err)
+	}
+	// a receiver that refuses the read has no light, whatever the list says
+	mem[-3] = 1
+	if s, _ := m.ReadState(); s.RxLight != nil {
+		t.Fatal("receiver light shown for a receiver without one")
+	}
+	// simple receivers, and lights hidden by flags
+	mem[-3], mem[-30] = 0, 2
+	reg := testRegistry()
+	reg.RxFlags["373b:104d"] = []string{"singleRgb"}
+	reg.Compx.Cid["2,49"] = Entry{"MAD R", "PAW3395", []string{"noDpiRGB"}}
+	m = &CompxMouse{T: ft, VID: 0x373B, PID: 0x104D, Receiver: true, Reg: reg}
+	if s, _ := m.ReadState(); s.Light != nil || s.StageColors != nil || *s.RxLight != (ReceiverLight{Kind: "simple", Mode: 2, Sleep: -1}) {
+		t.Fatalf("simple receiver %+v, light %+v", s.RxLight, s.Light)
+	}
+	if err := m.SetReceiverLight(ReceiverLight{Kind: "simple", Mode: 1, Sleep: -1}); err != nil || mem[-30] != 1 {
+		t.Fatal("simple receiver write", err)
+	}
+	reg.RxFlags["373b:104d"] = []string{"noDongleRGB"}
+	if s, _ := m.ReadState(); s.RxLight != nil {
+		t.Fatal("receiver light shown on a noDongleRGB receiver")
+	}
+}
+
+func TestBitmouseLights(t *testing.T) {
+	ft, mem, _ := fakeBitmouse(1)
+	copy(mem[bmAddrLight:], []byte{1, 170, 20})               // breathing, medium, fast
+	copy(mem[4000:], []byte{1, 2, 100, 0, 7, 0, 128, 255, 3}) // receiver: one-colour breathing
+	m := NewBitMouse(ft, 0x373B, 0x12CF, testRegistry())
+	s, err := m.ReadState()
+	if err != nil || *s.Light != (Light{"breathing", 1, 2}) || s.StageColors[1] != "#ff0000" || s.StageColors[2] != "#000000" {
+		t.Fatalf("light %+v %v %v", s.Light, s.StageColors, err)
+	}
+	if *s.RxLight != (ReceiverLight{Kind: "full", Mode: 2, Color: "#0080ff", Brightness: 2, Speed: 0, Sleep: -1}) {
+		t.Fatalf("receiver light %+v", s.RxLight)
+	}
+	if err := m.SetLight(Light{"off", 0, 1}); err != nil || mem[bmAddrLight] != 0 || mem[bmAddrLight+1] != 85 || mem[bmAddrLight+2] != 15 {
+		t.Fatal("light write", err)
+	}
+	if err := m.SetStageColor(0, "#ff0000"); err != nil || mem[3+6] != 255 || mem[3+4] != 0 {
+		t.Fatal("stage colour", err)
+	}
+	if err := m.SetReceiverLight(ReceiverLight{Kind: "full", Mode: 3, Color: "#ffffff", Brightness: 0, Speed: 1, Sleep: -1}); err != nil ||
+		mem[4001] != 3 || mem[4002] != 10 || mem[4003] != 1 || mem[4004] != 7 || mem[4005] != 255 || mem[4008] != 3 {
+		t.Fatal("receiver light write keeps unknown bytes", err, mem[4000:4009])
 	}
 }
 

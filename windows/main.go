@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unsafe"
 
 	"github.com/lxn/walk"
 	. "github.com/lxn/walk/declarative"
@@ -111,6 +112,14 @@ func (c *choice) set(key string) {
 	c.cb.SetCurrentIndex(len(c.opts) - 1)
 }
 
+// key: the option currently picked, or "" when none is.
+func (c *choice) key() string {
+	if i := c.cb.CurrentIndex(); i >= 0 && i < len(c.opts) {
+		return c.opts[i].key
+	}
+	return ""
+}
+
 func (c *choice) changed() {
 	if c.app.loading {
 		return
@@ -140,6 +149,16 @@ type app struct {
 	buttons     [6]*choice
 	stageCount  *choice
 	activeStage *choice
+
+	stageSwatches [8]*walk.Composite
+	stageColorBtn [8]*walk.PushButton
+	lightBox      *walk.GroupBox
+	rxBox         *walk.GroupBox
+	rxColorRow    *walk.Composite
+	rxSwatch      *walk.Composite
+	rxColor       string
+	rxRows        map[string]*walk.Composite
+	customColors  [16]win.COLORREF // the colour dialog's custom swatches, kept between uses
 
 	mouse      core.Mouse
 	transport  *hidTransport
@@ -361,6 +380,9 @@ func (a *app) show(s *core.State) {
 	a.switches["motion_sync"].SetChecked(s.MotionSync)
 	a.switches["angle_snap"].SetChecked(s.AngleSnap)
 	a.switches["ripple"].SetChecked(s.Ripple)
+	a.switches["long_range"].SetVisible(s.LongRange != nil) // only where ATK HUB offers it
+	a.switches["long_range"].SetChecked(s.LongRange != nil && *s.LongRange)
+	a.showLights(s)
 	for i, b := range a.buttons {
 		b.set(actionKey(s.Buttons[i]))
 	}
@@ -372,6 +394,151 @@ func (a *app) show(s *core.State) {
 func (a *app) showStages(n int) {
 	for i, r := range a.stageRows {
 		r.SetVisible(i < n)
+	}
+}
+
+var (
+	lightModeOpts  = []opt{{"off", "Off"}, {"steady", "Steady"}, {"breathing", "Breathing"}}
+	brightnessOpts = []opt{{"0", "Low"}, {"1", "Medium"}, {"2", "High"}}
+	speedOpts      = []opt{{"0", "Slow"}, {"1", "Medium"}, {"2", "Fast"}}
+	rxSleepOpts    = []opt{{"0", "1 min"}, {"1", "5 min"}, {"2", "10 min"}}
+)
+
+func modeOpts(ms []core.LightMode) []opt {
+	var out []opt
+	for _, m := range ms {
+		out = append(out, opt{itoa(m.Value), m.Label})
+	}
+	return out
+}
+
+// pickColor opens the Windows colour dialog; ok is false when cancelled.
+func (a *app) pickColor(initial string) (string, bool) {
+	var r, g, b int
+	fmt.Sscanf(initial, "#%02x%02x%02x", &r, &g, &b)
+	cc := win.CHOOSECOLOR{HwndOwner: a.mw.Handle(), RgbResult: win.COLORREF(r | g<<8 | b<<16),
+		LpCustColors: &a.customColors, Flags: win.CC_RGBINIT | win.CC_FULLOPEN}
+	cc.LStructSize = uint32(unsafe.Sizeof(cc))
+	if !win.ChooseColor(&cc) {
+		return "", false
+	}
+	c := uint32(cc.RgbResult)
+	return fmt.Sprintf("#%02x%02x%02x", c&0xFF, c>>8&0xFF, c>>16&0xFF), true
+}
+
+func colorOf(hex string) walk.Color {
+	var r, g, b byte
+	fmt.Sscanf(hex, "#%02x%02x%02x", &r, &g, &b)
+	return walk.RGB(r, g, b)
+}
+
+func setSwatch(c *walk.Composite, hex string) {
+	if br, err := walk.NewSolidColorBrush(colorOf(hex)); err == nil {
+		c.SetBackground(br)
+	}
+}
+
+func (a *app) pickStageColor(i int) {
+	if a.state == nil || a.state.StageColors == nil {
+		return
+	}
+	color, ok := a.pickColor(a.state.StageColors[i])
+	if !ok {
+		return
+	}
+	a.apply(func(m core.Mouse) error { return m.SetStageColor(i, color) },
+		fmt.Sprintf("Stage %d colour %s", i+1, color), func() {
+			a.state.StageColors[i] = color
+			setSwatch(a.stageSwatches[i], color)
+		})
+}
+
+func (a *app) onLight() {
+	a.updateLightRows()
+	b, _ := strconv.Atoi(a.combos["light_brightness"].key())
+	sp, _ := strconv.Atoi(a.combos["light_speed"].key())
+	l := core.Light{Mode: a.combos["light_mode"].key(), Brightness: b, Speed: sp}
+	a.apply(func(m core.Mouse) error { return m.SetLight(l) }, "DPI light: "+l.Mode, nil)
+}
+
+func (a *app) updateLightRows() {
+	mode := a.combos["light_mode"].key()
+	a.combos["light_brightness"].cb.SetEnabled(mode != "off")
+	a.combos["light_speed"].cb.SetEnabled(mode == "breathing")
+}
+
+func (a *app) onRxLight() {
+	if a.state == nil || a.state.RxLight == nil {
+		return
+	}
+	a.updateRxRows()
+	want := core.ReceiverLight{Kind: a.state.RxLight.Kind, Sleep: -1}
+	want.Mode, _ = strconv.Atoi(a.combos["rx_mode"].key())
+	if want.Kind == "full" {
+		want.Color = a.rxColor
+		want.Brightness, _ = strconv.Atoi(a.combos["rx_brightness"].key())
+		want.Speed, _ = strconv.Atoi(a.combos["rx_speed"].key())
+		if a.state.RxLight.Sleep >= 0 {
+			want.Sleep, _ = strconv.Atoi(a.combos["rx_sleep"].key())
+		}
+	}
+	a.apply(func(m core.Mouse) error { return m.SetReceiverLight(want) }, "Receiver light updated",
+		func() { a.state.RxLight = &want })
+}
+
+func (a *app) updateRxRows() {
+	rx := a.state.RxLight
+	full := rx.Kind == "full"
+	mode, _ := strconv.Atoi(a.combos["rx_mode"].key())
+	a.rxColorRow.SetVisible(full)
+	a.rxColorRow.SetEnabled(core.RxColor[mode])
+	a.rxRows["brightness"].SetVisible(full)
+	a.combos["rx_brightness"].cb.SetEnabled(!core.RxNoBrightness[mode])
+	a.rxRows["speed"].SetVisible(full)
+	a.combos["rx_speed"].cb.SetEnabled(!core.RxNoSpeed[mode])
+	a.rxRows["sleep"].SetVisible(full && rx.Sleep >= 0)
+	a.combos["rx_sleep"].cb.SetEnabled(mode != 0)
+}
+
+func (a *app) showLights(s *core.State) {
+	a.lightBox.SetVisible(s.Light != nil)
+	for i := range a.stageSwatches {
+		a.stageSwatches[i].SetVisible(s.StageColors != nil)
+		a.stageColorBtn[i].SetVisible(s.StageColors != nil)
+		if s.StageColors != nil {
+			setSwatch(a.stageSwatches[i], s.StageColors[i])
+		}
+	}
+	if l := s.Light; l != nil {
+		a.combos["light_mode"].setOptions(lightModeOpts)
+		a.combos["light_mode"].set(l.Mode)
+		a.combos["light_brightness"].setOptions(brightnessOpts)
+		a.combos["light_brightness"].set(itoa(l.Brightness))
+		a.combos["light_speed"].setOptions(speedOpts)
+		a.combos["light_speed"].set(itoa(l.Speed))
+		a.updateLightRows()
+	}
+	a.rxBox.SetVisible(s.RxLight != nil)
+	if rx := s.RxLight; rx != nil {
+		modes := core.RxSimpleModes
+		if rx.Kind == "full" {
+			modes = core.RxFullModes
+		}
+		a.combos["rx_mode"].setOptions(modeOpts(modes))
+		a.combos["rx_mode"].set(itoa(rx.Mode))
+		if rx.Kind == "full" {
+			a.rxColor = rx.Color
+			setSwatch(a.rxSwatch, rx.Color)
+			a.combos["rx_brightness"].setOptions(brightnessOpts)
+			a.combos["rx_brightness"].set(itoa(rx.Brightness))
+			a.combos["rx_speed"].setOptions(speedOpts)
+			a.combos["rx_speed"].set(itoa(rx.Speed))
+			a.combos["rx_sleep"].setOptions(rxSleepOpts)
+			if rx.Sleep >= 0 {
+				a.combos["rx_sleep"].set(itoa(rx.Sleep))
+			}
+		}
+		a.updateRxRows()
 	}
 }
 
@@ -444,6 +611,17 @@ func (a *app) buildUI() error {
 			"Click debounce %s"),
 		"sleep": a.intChoice(func(m core.Mouse, v int) error { return m.SetSleep(v) }, "Sleeps after %s"),
 	}
+	for _, k := range []string{"light_mode", "light_brightness", "light_speed"} {
+		a.combos[k] = a.newChoice(func(opt) { a.onLight() })
+	}
+	for _, k := range []string{"rx_mode", "rx_brightness", "rx_speed", "rx_sleep"} {
+		a.combos[k] = a.newChoice(func(opt) { a.onRxLight() })
+	}
+	var rxBrightRow, rxSpeedRow, rxSleepRow *walk.Composite
+	rxRow := func(assign **walk.Composite, label, key string) Widget {
+		return Composite{AssignTo: assign, Layout: HBox{MarginsZero: true}, Children: []Widget{
+			Label{Text: label, MinSize: Size{Width: 170}}, HSpacer{}, a.comboWidget(a.combos[key])}}
+	}
 	a.stageCount = a.newChoice(func(o opt) {
 		n, _ := strconv.Atoi(o.key)
 		a.showStages(n)
@@ -479,6 +657,10 @@ func (a *app) buildUI() error {
 				Label{Text: fmt.Sprintf("Stage %d", i+1), MinSize: Size{Width: 170}}, HSpacer{},
 				LineEdit{AssignTo: &a.stageEdits[i], MinSize: Size{Width: 160}, MaxSize: Size{Width: 160},
 					OnEditingFinished: func() { a.onStageDPI(i) }},
+				Composite{AssignTo: &a.stageSwatches[i], MinSize: Size{Width: 22, Height: 22},
+					MaxSize: Size{Width: 22, Height: 22}},
+				PushButton{AssignTo: &a.stageColorBtn[i], Text: "Colour…", ToolTipText: fmt.Sprintf("Stage %d light colour", i+1),
+					OnClicked: func() { a.pickStageColor(i) }},
 			}})
 	}
 	var buttonWidgets []Widget
@@ -488,7 +670,7 @@ func (a *app) buildUI() error {
 				a.comboWidget(a.buttons[i])}})
 	}
 	a.switches = map[string]*walk.CheckBox{}
-	var ms, as, rp *walk.CheckBox
+	var ms, as, rp, lr *walk.CheckBox
 	toggle := func(cb **walk.CheckBox, title string, write func(m core.Mouse, on bool) error) func() {
 		return func() {
 			if a.loading {
@@ -549,10 +731,35 @@ func (a *app) buildUI() error {
 							OnClicked: toggle(&as, "Angle snapping", func(m core.Mouse, on bool) error { return m.SetAngleSnap(on) })},
 						CheckBox{AssignTo: &rp, Alignment: AlignHNearVCenter, Text: "Ripple control (smooths jitter at high DPI)",
 							OnClicked: toggle(&rp, "Ripple control", func(m core.Mouse, on bool) error { return m.SetRipple(on) })},
+						CheckBox{AssignTo: &lr, Alignment: AlignHNearVCenter, Text: "Long range mode (stronger wireless signal far from the receiver, uses more battery)",
+							OnClicked: toggle(&lr, "Long range mode", func(m core.Mouse, on bool) error { return m.SetLongRange(on) })},
 					}},
 					GroupBox{Title: "Clicks and power", Layout: VBox{}, Children: []Widget{
 						a.row("Click debounce", a.comboWidget(a.combos["debounce"])),
 						a.row("Sleep after", a.comboWidget(a.combos["sleep"])),
+					}},
+					GroupBox{AssignTo: &a.lightBox, Title: "Lighting", Layout: VBox{}, Children: []Widget{
+						Label{Text: "Stage colours are next to each DPI stage above."},
+						a.row("DPI light", a.comboWidget(a.combos["light_mode"])),
+						a.row("Brightness", a.comboWidget(a.combos["light_brightness"])),
+						a.row("Breathing speed", a.comboWidget(a.combos["light_speed"])),
+					}},
+					GroupBox{AssignTo: &a.rxBox, Title: "Receiver light", Layout: VBox{}, Children: []Widget{
+						a.row("Effect", a.comboWidget(a.combos["rx_mode"])),
+						Composite{AssignTo: &a.rxColorRow, Layout: HBox{MarginsZero: true}, Children: []Widget{
+							Label{Text: "Colour", MinSize: Size{Width: 170}}, HSpacer{},
+							Composite{AssignTo: &a.rxSwatch, MinSize: Size{Width: 22, Height: 22}, MaxSize: Size{Width: 22, Height: 22}},
+							PushButton{Text: "Colour…", OnClicked: func() {
+								if c, ok := a.pickColor(a.rxColor); ok {
+									a.rxColor = c
+									setSwatch(a.rxSwatch, c)
+									a.onRxLight()
+								}
+							}},
+						}},
+						rxRow(&rxBrightRow, "Brightness", "rx_brightness"),
+						rxRow(&rxSpeedRow, "Speed", "rx_speed"),
+						rxRow(&rxSleepRow, "Turns off after", "rx_sleep"),
 					}},
 					GroupBox{Title: "Buttons", Layout: VBox{}, Children: buttonWidgets},
 					VSpacer{},
@@ -564,6 +771,10 @@ func (a *app) buildUI() error {
 		return err
 	}
 	a.switches["motion_sync"], a.switches["angle_snap"], a.switches["ripple"] = ms, as, rp
+	a.switches["long_range"] = lr
+	a.rxRows = map[string]*walk.Composite{"brightness": rxBrightRow, "speed": rxSpeedRow, "sleep": rxSleepRow}
+	a.lightBox.SetVisible(false) // until a mouse with lights is read
+	a.rxBox.SetVisible(false)
 	all := []*choice{a.stageCount, a.activeStage}
 	for _, c := range a.combos {
 		all = append(all, c)

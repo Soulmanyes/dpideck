@@ -379,6 +379,8 @@ type Ident struct {
 	Sensor   string
 	Flags    []string
 	Receiver string // receiver name when connected through one
+	// ReceiverFlags: what kind of light the receiver has (singleRgb, gatherRgb, noDongleRGB)
+	ReceiverFlags []string
 }
 
 type Battery struct {
@@ -401,6 +403,10 @@ type State struct {
 	MotionSync  bool
 	AngleSnap   bool
 	Ripple      bool
+	LongRange   *bool          // nil where ATK HUB doesn't offer long range mode
+	Light       *Light         // nil without a DPI light
+	StageColors []string       // "#rrggbb" for each of the 8 stages; nil without a light
+	RxLight     *ReceiverLight // nil when the receiver has no light we can drive
 	SleepS      int
 	Buttons     []Action
 }
@@ -417,6 +423,10 @@ type Mouse interface {
 	SetMotionSync(on bool) error
 	SetAngleSnap(on bool) error
 	SetRipple(on bool) error
+	SetLongRange(on bool) error
+	SetLight(l Light) error
+	SetStageColor(i int, color string) error
+	SetReceiverLight(l ReceiverLight) error
 	SetSleep(seconds int) error
 	SetSensorMode(mode int) error
 	SetButton(i int, a Action) error

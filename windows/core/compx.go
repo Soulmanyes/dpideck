@@ -4,6 +4,7 @@
 package core
 
 import (
+	"crypto/rand"
 	"fmt"
 	"strconv"
 	"strings"
@@ -17,7 +18,14 @@ const (
 	cxGetEEPROM     = 0x08
 	cxFactoryReset  = 0x09
 	cxCidMid        = 0x10
+	cxMouseInfo     = 0x01 // ATK HUB's "DownLoadData"; sent only as its info read
 	cxMouseVersion  = 0x12
+	cxSetRxSimple   = 0x14 // simple receiver light (singleRgb)
+	cxGetRxSimple   = 0x15
+	cxSetLongRange  = 0x16
+	cxGetLongRange  = 0x17
+	cxSetRxLight    = 0x18
+	cxGetRxLight    = 0x19
 	cxDongleVersion = 0x1D
 
 	addrRateRow   = 0x00 // [rate,~, stages,~, active,~, bhop,~, btnMode,~]
@@ -25,15 +33,29 @@ const (
 	addrDPI3955   = 0x1B00
 	addrKey0      = 0x60
 	addrFuncRow   = 0xA9 // [debounce,~, motionSync,~, sleep/10,~, lineCorr,~, ripple,~]
+	addrLightRow  = 0x4C // [mode,~, brightness,~, speed,~, on,~]
 	addrSensorRow = 0xB5 // [sleepOn,~, sleep/10,~, sensorMode,~]
 	addrShortcut0 = 0x100
 )
 
 var addrDPIRows = []int{0x0C, 0x14, 0x1C, 0x24}
+var addrDPIColorRows = []int{0x2C, 0x34, 0x3C, 0x44} // two stages per row: [R, G, B, ~] each
 
-// Anything else (firmware upgrade, raw download, pairing) is refused.
+var (
+	cxLightModes      = map[string]int{"steady": 1, "breathing": 2}
+	cxLightBrightness = [3]int{16, 128, 255}
+	cxLightSpeed      = [3]int{1, 3, 5}
+	cxRxSpeed         = [3]int{0, 5, 9}
+	cxRxBrightness    = [3]int{0, 5, 9}
+	cxRxSleep         = [3]int{1, 5, 10} // minutes
+)
+
+// Anything else (firmware upgrade, pairing) is refused. 0x01 goes only
+// through LinkType, in the exact form ATK HUB reads it.
 var cxAllowed = map[byte]bool{cxBattery: true, cxSetEEPROM: true, cxGetEEPROM: true,
-	cxFactoryReset: true, cxCidMid: true, cxMouseVersion: true, cxDongleVersion: true}
+	cxFactoryReset: true, cxCidMid: true, cxMouseVersion: true, cxDongleVersion: true,
+	cxSetLongRange: true, cxGetLongRange: true, cxSetRxLight: true, cxGetRxLight: true,
+	cxSetRxSimple: true, cxGetRxSimple: true}
 
 var CxRates = map[int]int{1000: 0x01, 500: 0x02, 250: 0x04, 125: 0x08, 2000: 0x10, 4000: 0x20, 8000: 0x40}
 
@@ -121,7 +143,7 @@ func (m *CompxMouse) Family() string   { return "compx" }
 func (m *CompxMouse) IsReceiver() bool { return m.Receiver }
 
 func (m *CompxMouse) xfer(cmd byte, addr, length int, payload []byte) ([]byte, error) {
-	if !cxAllowed[cmd] {
+	if !cxAllowed[cmd] && !(cmd == cxMouseInfo && addr == 0 && length == 8 && len(payload) == 4) {
 		return nil, devErr("command 0x%02x is not allowed", cmd)
 	}
 	return exchange(m.T, CxPack(cmd, addr, length, payload), func(raw []byte) ([]byte, error) {
@@ -144,6 +166,18 @@ func (m *CompxMouse) xfer(cmd byte, addr, length int, payload []byte) ([]byte, e
 		}
 		return r, nil
 	})
+}
+
+// LinkType: the link the mouse reports (see LinkMaxRate), or -1. ATK HUB sends
+// 4 random bytes; the reply echoes them scrambled, then CID, MID and the link type.
+func (m *CompxMouse) LinkType() int {
+	nonce := make([]byte, 4)
+	rand.Read(nonce)
+	r, err := m.xfer(cxMouseInfo, 0, 8, nonce)
+	if err != nil {
+		return -1
+	}
+	return int(r[11])
 }
 
 // Read returns up to 10 bytes of EEPROM.
@@ -301,7 +335,7 @@ func (m *CompxMouse) ReadState() (*State, error) {
 	}
 	s.SensorMode = sensorRow[4]
 	// never hide a rate the mouse is already set to
-	maxRate := max(UsbMaxRate(s.ID.Receiver), s.RateHz)
+	maxRate := max(MaxRate(m.LinkType()), s.RateHz)
 	s.Caps = Capabilities("compx", s.ID.Sensor, s.ID.Flags, maxRate, CxRates,
 		CompetitiveMaxAllowed(s.ID.Key, s.Versions["mouse"], CompetitiveMaxTable()),
 		s.SensorMode, CxSensorModes)
@@ -326,6 +360,11 @@ func (m *CompxMouse) ReadState() (*State, error) {
 		return nil, err
 	}
 	s.DebounceMs, s.MotionSync, s.SleepS, s.AngleSnap, s.Ripple = f[0], f[2] != 0, f[4]*10, f[6] != 0, f[8] != 0
+	s.LongRange = m.longRange(s.ID.Flags)
+	if s.Light, s.StageColors, err = m.light(s.ID.Flags); err != nil {
+		return nil, err
+	}
+	s.RxLight = m.receiverLight(s.ID.ReceiverFlags)
 	keys, err := m.readLong(addrKey0, 24)
 	if err != nil {
 		return nil, err
@@ -400,6 +439,129 @@ func (m *CompxMouse) SetMotionSync(on bool) error  { return m.patchRow(addrFuncR
 func (m *CompxMouse) SetAngleSnap(on bool) error   { return m.patchRow(addrFuncRow, 10, 6, b2i(on)) }
 func (m *CompxMouse) SetRipple(on bool) error      { return m.patchRow(addrFuncRow, 10, 8, b2i(on)) }
 func (m *CompxMouse) SetSensorMode(mode int) error { return m.patchRow(addrSensorRow, 6, 4, mode) }
+
+// light: the DPI light and the 8 stage colours, or nil without a light.
+func (m *CompxMouse) light(flags []string) (*Light, []string, error) {
+	if contains(flags, "noDpiRGB") {
+		return nil, nil, nil
+	}
+	row, err := m.Read(addrLightRow, 8)
+	if err != nil {
+		return nil, nil, err
+	}
+	l := &Light{Mode: "steady", Brightness: nearestLevel(row[2], cxLightBrightness),
+		Speed: nearestLevel(row[4], cxLightSpeed)}
+	if row[0] == cxLightModes["breathing"] {
+		l.Mode = "breathing"
+	}
+	if row[6] == 0 {
+		l.Mode = "off"
+	}
+	var colors []string
+	for _, a := range addrDPIColorRows {
+		r, err := m.Read(a, 8)
+		if err != nil {
+			return nil, nil, err
+		}
+		colors = append(colors, rgbHex(r[0], r[1], r[2]), rgbHex(r[4], r[5], r[6]))
+	}
+	return l, colors, nil
+}
+
+func (m *CompxMouse) SetLight(l Light) error {
+	row, err := m.Read(addrLightRow, 8)
+	if err != nil {
+		return err
+	}
+	set := func(i, v int) { p := pair(v); row[i], row[i+1] = int(p[0]), int(p[1]) }
+	if l.Mode != "off" { // off keeps the last effect for next time
+		set(0, cxLightModes[l.Mode])
+	}
+	set(2, cxLightBrightness[l.Brightness])
+	set(4, cxLightSpeed[l.Speed])
+	set(6, b2i(l.Mode != "off"))
+	return m.write(addrLightRow, row)
+}
+
+func (m *CompxMouse) SetStageColor(i int, color string) error {
+	addr := addrDPIColorRows[i>>1]
+	row, err := m.Read(addr, 8)
+	if err != nil {
+		return err
+	}
+	c, o := hexRGB(color), 4*(i&1)
+	row[o], row[o+1], row[o+2], row[o+3] = c[0], c[1], c[2], int(inv(c[0]+c[1]+c[2]))
+	return m.write(addr, row)
+}
+
+// receiverLight: the receiver's light, or nil if it has none we can drive.
+// A receiver without a light refuses the read, whatever ATK HUB's list says.
+func (m *CompxMouse) receiverLight(flags []string) *ReceiverLight {
+	kind := ""
+	if m.Receiver {
+		kind = receiverLightKind(flags)
+	}
+	switch kind {
+	case "simple":
+		if r, err := m.xfer(cxGetRxSimple, 0, 0, nil); err == nil {
+			return &ReceiverLight{Kind: kind, Mode: int(r[5]), Sleep: -1}
+		}
+	case "full":
+		if r, err := m.xfer(cxGetRxLight, 0, 0, nil); err == nil {
+			return &ReceiverLight{Kind: kind, Mode: int(r[5]), Color: rgbHex(int(r[6]), int(r[7]), int(r[8])),
+				Speed: nearestLevel(int(r[9]), cxRxSpeed), Brightness: nearestLevel(int(r[10]), cxRxBrightness),
+				Sleep: nearestLevel(int(r[11]), cxRxSleep)}
+		}
+	}
+	return nil
+}
+
+func (m *CompxMouse) SetReceiverLight(l ReceiverLight) error {
+	var err error
+	flags := []string{}
+	if l.Kind == "simple" {
+		flags = []string{"singleRgb"}
+		_, err = m.xfer(cxSetRxSimple, 0, 10, []byte{byte(l.Mode)})
+	} else {
+		c := hexRGB(l.Color)
+		_, err = m.xfer(cxSetRxLight, 0, 10, []byte{byte(l.Mode), byte(c[0]), byte(c[1]), byte(c[2]),
+			byte(cxRxSpeed[l.Speed]), byte(cxRxBrightness[l.Brightness]), byte(cxRxSleep[l.Sleep])})
+	}
+	if err != nil {
+		return err
+	}
+	if got := m.receiverLight(flags); got == nil || *got != l {
+		return devErr("receiver light did not stick")
+	}
+	return nil
+}
+
+// longRange: long range mode on/off, or nil where ATK HUB doesn't offer it.
+func (m *CompxMouse) longRange(flags []string) *bool {
+	if contains(flags, "noFarDistance") {
+		return nil
+	}
+	r, err := m.xfer(cxGetLongRange, 0, 0, nil)
+	if err != nil {
+		return nil
+	}
+	on := r[5] != 0
+	return &on
+}
+
+func (m *CompxMouse) SetLongRange(on bool) error {
+	if _, err := m.xfer(cxSetLongRange, 0, 10, []byte{byte(b2i(on))}); err != nil {
+		return err
+	}
+	r, err := m.xfer(cxGetLongRange, 0, 0, nil)
+	if err != nil {
+		return err
+	}
+	if int(r[5]) != b2i(on) {
+		return devErr("long range mode did not stick")
+	}
+	return nil
+}
 
 // SetSleep writes both timers: closeLedTime (0xA9 row) and the sensor's own (0xB5).
 func (m *CompxMouse) SetSleep(seconds int) error {

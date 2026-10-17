@@ -12,6 +12,11 @@ What it can change:
 - DPI: 1 to 8 stages, up to 50000 DPI depending on the sensor, plus the active stage
 - polling rate, from 125 Hz up to 8000 Hz depending on the connection
 - sensor mode, lift-off distance, motion sync, angle snapping, ripple control
+- long range mode (stronger wireless signal, more battery use), on mice where
+  ATK HUB offers it
+- lighting: the DPI light (off, steady or breathing, brightness, speed) and a
+  colour for each DPI stage; and the receiver's own light, on receivers that
+  have one (the app asks the receiver, so it's hidden on receivers without one)
 - click debounce and sleep timer
 - button mapping: clicks, back/forward, DPI cycle/up/down, scrolling, disabled
 
@@ -27,10 +32,6 @@ run `DPIdeck.exe`. Nothing needs installing.
 - Windows may say "Windows protected your PC" because the app isn't signed. Click
   "More info", then "Run anyway".
 - Its caches and backups are kept in `%AppData%\dpideck`.
-- Difference from Linux: Windows can't easily tell how fast a USB cable connection
-  is, so over a cable the app offers polling rates up to 1000 Hz (or the mouse's
-  current rate, if that is higher). Through a 2K/4K/8K receiver it offers up to
-  the receiver's rate.
 
 The Windows version is a separate program written in Go (`windows/`), built with
 `windows/build.sh`. It shares no code with the Linux version, but `PARITY.md`
@@ -99,10 +100,10 @@ time it runs (see Privacy). It then offers what ATK HUB offers for that sensor:
 On COMPX mice with the PAW3395SE, PAW3311 or PAW3315, DPI stops at 10000, because
 ATK HUB's own code can't store higher values for them.
 
-The highest polling rate offered depends on the USB connection. Full-speed USB
-(all 1K dongles and most cables) tops out at 1000 Hz, and the app reads this from
-the system. 2K/4K/8K dongles unlock higher rates, capped at the rate in the
-dongle's name.
+The polling rates offered are the ones the mouse supports. Like ATK HUB, the
+app asks the mouse what it is connected through (1K/2K/4K/8K receiver or cable,
+or NearLink) and offers rates up to that. A mouse that doesn't answer is offered
+every rate.
 
 Sensor mode offers Basic and Competitive on every mouse. Competitive Max appears
 only where ATK HUB offers it: on COMPX mice it depends on the model and firmware

@@ -13,7 +13,7 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Adw, Gio, GLib, Gtk  # noqa: E402
+from gi.repository import Adw, Gdk, Gio, GLib, Gtk  # noqa: E402
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import atk  # noqa: E402
@@ -26,6 +26,10 @@ LOD_LEVELS = {"levels": [(1, "1 mm"), (2, "2 mm")],
               "levels07": [(3, "0.7 mm"), (1, "1 mm"), (2, "2 mm")]}
 DEBOUNCE = [(0, "Off"), (1, "1 ms"), (2, "2 ms"), (4, "4 ms"),
             (8, "8 ms"), (15, "15 ms"), (20, "20 ms")]
+LIGHT_MODES = [("off", "Off"), ("steady", "Steady"), ("breathing", "Breathing")]
+BRIGHTNESS = [(0, "Low"), (1, "Medium"), (2, "High")]
+SPEED = [(0, "Slow"), (1, "Medium"), (2, "Fast")]
+RX_SLEEP = [(0, "1 min"), (1, "5 min"), (2, "10 min")]
 SLEEP = [(30, "30 s"), (60, "1 min"), (120, "2 min"), (180, "3 min"),
          (300, "5 min"), (1200, "20 min"), (1500, "25 min"), (1800, "30 min")]
 ACTIONS = [
@@ -68,6 +72,16 @@ class Worker:
                 GLib.idle_add(done, result)
 
 
+def hex_rgba(color):
+    rgba = Gdk.RGBA()
+    rgba.parse(color)
+    return rgba
+
+
+def rgba_hex(rgba):
+    return "#%02x%02x%02x" % tuple(round(c * 255) for c in (rgba.red, rgba.green, rgba.blue))
+
+
 class Choice:
     """An Adw.ComboRow over (value, label) pairs that can show unknown values."""
 
@@ -104,6 +118,12 @@ class Choice:
             values = [v for v, _l in self.options]
         self.row.set_selected(values.index(value))
         self.quiet = False
+
+    def value(self):
+        return self.options[self.row.get_selected()][0]
+
+    def label(self):
+        return self.options[self.row.get_selected()][1]
 
     def _changed(self, *_):
         if self.quiet:
@@ -194,11 +214,18 @@ class Window(Adw.ApplicationWindow):
                              self.on_active)
         dpi.add(self.active.row)
         self.stage_rows = []
+        self.stage_colors = []
         for i in range(8):
             row = Adw.SpinRow.new_with_range(50, 26000, 50)
             row.set_snap_to_ticks(True)
             row.set_title(f"Stage {i + 1}")
             row.connect("notify::value", self.on_stage_dpi, i)
+            color = Gtk.ColorDialogButton(dialog=Gtk.ColorDialog(with_alpha=False),
+                                          valign=Gtk.Align.CENTER,
+                                          tooltip_text=f"Stage {i + 1} light colour")
+            color.connect("notify::rgba", self.on_stage_color, i)
+            row.add_suffix(color)
+            self.stage_colors.append(color)
             dpi.add(row)
             self.stage_rows.append(row)
         self.page.add(dpi)
@@ -232,7 +259,10 @@ class Window(Adw.ApplicationWindow):
                 ("motion_sync", "Motion sync", "Smoother tracking, about 1 ms more latency",
                  "set_motion_sync"),
                 ("angle_snap", "Angle snapping", "Straightens lines you draw", "set_angle_snap"),
-                ("ripple", "Ripple control", "Smooths jitter at high DPI", "set_ripple")):
+                ("ripple", "Ripple control", "Smooths jitter at high DPI", "set_ripple"),
+                ("long_range", "Long range mode",
+                 "Stronger wireless signal far from the receiver, uses more battery",
+                 "set_long_range")):
             row = Adw.SwitchRow(title=title, subtitle=sub)
             row.connect("notify::active", self.on_switch, setter, title)
             perf.add(row)
@@ -247,6 +277,31 @@ class Window(Adw.ApplicationWindow):
         misc.add(self.debounce.row)
         misc.add(self.sleep.row)
         self.page.add(misc)
+
+        light = self.light_group = Adw.PreferencesGroup(
+            title="Lighting", description="Stage colours are next to each DPI stage above.")
+        self.light_mode = Choice("DPI light", LIGHT_MODES, lambda v, l: self.on_light())
+        self.light_brightness = Choice("Brightness", BRIGHTNESS, lambda v, l: self.on_light())
+        self.light_speed = Choice("Breathing speed", SPEED, lambda v, l: self.on_light())
+        for c in (self.light_mode, self.light_brightness, self.light_speed):
+            light.add(c.row)
+        self.page.add(light)
+
+        rx = self.rx_group = Adw.PreferencesGroup(title="Receiver light")
+        self.rx_mode = Choice("Effect", atk.RX_FULL_MODES, lambda v, l: self.on_rx_light())
+        self.rx_color_row = Adw.ActionRow(title="Colour")
+        self.rx_color = Gtk.ColorDialogButton(dialog=Gtk.ColorDialog(with_alpha=False),
+                                              valign=Gtk.Align.CENTER)
+        self.rx_color.connect("notify::rgba", lambda *_: self.on_rx_light())
+        self.rx_color_row.add_suffix(self.rx_color)
+        self.rx_brightness = Choice("Brightness", BRIGHTNESS, lambda v, l: self.on_rx_light())
+        self.rx_speed = Choice("Speed", SPEED, lambda v, l: self.on_rx_light())
+        self.rx_sleep = Choice("Turns off after", RX_SLEEP, lambda v, l: self.on_rx_light())
+        rx.add(self.rx_mode.row)
+        rx.add(self.rx_color_row)
+        for c in (self.rx_brightness, self.rx_speed, self.rx_sleep):
+            rx.add(c.row)
+        self.page.add(rx)
 
         btns = Adw.PreferencesGroup(title="Buttons")
         self.buttons = []
@@ -367,11 +422,59 @@ class Window(Adw.ApplicationWindow):
             self.lod_raw_value.set_label(f"code {s['lod_code']}")
         self.debounce.set(s["debounce_ms"])
         self.sleep.set(s["sleep_s"])
+        self.show_lights(s)
         for key, row in self.switches.items():
-            row.set_active(s[key])
+            row.set_visible(s.get(key) is not None)   # long range: only where offered
+            row.set_active(bool(s.get(key)))
         for c, a in zip(self.buttons, s["buttons"]):
             c.set(json.dumps(a, sort_keys=True))
         self.loading = False
+
+    def show_lights(self, s):
+        """Fill the light controls; called while self.loading is set."""
+        light, colors = s.get("light"), s.get("stage_colors")
+        self.light_group.set_visible(light is not None)
+        for i, button in enumerate(self.stage_colors):
+            button.set_visible(colors is not None)
+            if colors:
+                button.set_rgba(hex_rgba(colors[i]))
+        if light:
+            self.light_mode.set(light["mode"])
+            self.light_brightness.set(light["brightness"])
+            self.light_speed.set(light["speed"])
+            self.update_light_rows()
+        rx = s.get("receiver_light")
+        self.rx_group.set_visible(rx is not None)
+        if rx:
+            full = rx["kind"] == "full"
+            self.rx_mode.limit(atk.RX_FULL_MODES if full else atk.RX_SIMPLE_MODES)
+            self.rx_mode.set(rx["mode"])
+            if full:
+                self.rx_color.set_rgba(hex_rgba(rx["color"]))
+                self.rx_brightness.set(rx["brightness"])
+                self.rx_speed.set(rx["speed"])
+                if rx["sleep"] is not None:
+                    self.rx_sleep.set(rx["sleep"])
+            self.update_rx_rows()
+
+    def update_light_rows(self):
+        mode = self.light_mode.value()
+        self.light_brightness.row.set_sensitive(mode != "off")
+        self.light_speed.row.set_sensitive(mode == "breathing")
+
+    def update_rx_rows(self):
+        rx = self.state and self.state.get("receiver_light")
+        if not rx:
+            return
+        full, mode = rx["kind"] == "full", self.rx_mode.value()
+        self.rx_color_row.set_visible(full)
+        self.rx_color_row.set_sensitive(mode in atk.RX_COLOR)
+        self.rx_brightness.row.set_visible(full)
+        self.rx_brightness.row.set_sensitive(mode not in atk.RX_NO_BRIGHTNESS)
+        self.rx_speed.row.set_visible(full)
+        self.rx_speed.row.set_sensitive(mode not in atk.RX_NO_SPEED)
+        self.rx_sleep.row.set_visible(full and rx["sleep"] is not None)
+        self.rx_sleep.row.set_sensitive(mode != 0)
 
     # ---- writes ---------------------------------------------------------
     def apply(self, fn, message, after=None):
@@ -394,6 +497,32 @@ class Window(Adw.ApplicationWindow):
     def on_switch(self, row, _pspec, setter, title):
         on = row.get_active()
         self.apply(lambda m: getattr(m, setter)(on), f"{title} {'on' if on else 'off'}")
+
+    def on_stage_color(self, button, _pspec, i):
+        color = rgba_hex(button.get_rgba())
+        self.apply(lambda m: m.set_stage_color(i, color), f"Stage {i + 1} colour {color}")
+
+    def on_light(self):
+        self.update_light_rows()
+        mode, label = self.light_mode.value(), self.light_mode.label()
+        b, sp = self.light_brightness.value(), self.light_speed.value()
+        self.apply(lambda m: m.set_light(mode, b, sp), f"DPI light: {label}")
+
+    def on_rx_light(self):
+        rx = self.state and self.state.get("receiver_light")
+        if not rx or self.loading:
+            return
+        self.update_rx_rows()
+        want = {"kind": rx["kind"], "mode": self.rx_mode.value()}
+        if rx["kind"] == "full":
+            want.update(color=rgba_hex(self.rx_color.get_rgba()),
+                        brightness=self.rx_brightness.value(), speed=self.rx_speed.value(),
+                        sleep=self.rx_sleep.value() if rx["sleep"] is not None else None)
+
+        def stored(_):
+            self.state["receiver_light"] = want
+        self.apply(lambda m: m.set_receiver_light(want),
+                   f"Receiver light: {self.rx_mode.label()}", stored)
 
     def on_stage_count(self, row, _pspec):
         n = int(row.get_value())

@@ -49,9 +49,12 @@ DEVICES_MAX_AGE = 30 * 24 * 3600
 DOWNLOAD_LIMIT = 64 * 1024 * 1024
 FAMILY_BY_USAGE_PAGE = {0xFF04: "compx", 0xFF05: "bitmouse"}
 RECOVERY_USAGE_PAGE = 0xFF02    # ATK HUB lists mice in firmware-recovery mode under it
-KEEP_FLAGS = {"noBottomButton", "noZeroKeyDebounce", "noAthleticsMax"}
+KEEP_FLAGS = {"noBottomButton", "noZeroKeyDebounce", "noAthleticsMax", "noFarDistance",
+              "noDpiRGB"}
+DEVICES_FORMAT = 3              # bumped when KEEP_FLAGS changes, so old caches refresh
 EMPTY_REGISTRY = {"compx": {"cid": {}, "pid": {}}, "bitmouse": {"cid": {}, "pid": {}},
-                  "receivers": {}, "recovery": []}
+                  "receivers": {}, "receiver_flags": {}, "recovery": []}
+RECEIVER_FLAGS = {"singleRgb", "gatherRgb", "noDongleRGB"}   # what kind of light it has
 _registry = None
 
 
@@ -101,6 +104,9 @@ def parse_device_tables(scripts):
             sensor = re.search(r"sensor:[A-Za-z_$]+\.(\w+)", o)
             if "receiver:!0" in o:
                 reg["receivers"][usb] = name
+                flags = sorted(set(re.findall(r"(\w+):!0", o)) & RECEIVER_FLAGS)
+                if flags:
+                    reg["receiver_flags"][usb] = flags
                 continue
             if not sensor:
                 continue    # other ATK products (docks, monitors...) share the interface
@@ -153,7 +159,8 @@ def registry(refresh=False):
     try:
         with open(DEVICES_CACHE) as f:
             cached = json.load(f)
-        if not refresh and time.time() - cached["fetched"] < DEVICES_MAX_AGE:
+        if (not refresh and cached.get("format") == DEVICES_FORMAT
+                and time.time() - cached["fetched"] < DEVICES_MAX_AGE):
             _registry = cached["registry"]
             return _registry
     except (OSError, ValueError, KeyError, TypeError):
@@ -162,7 +169,7 @@ def registry(refresh=False):
         reg = fetch_registry()
         os.makedirs(CONFIG_DIR, exist_ok=True)
         with open(DEVICES_CACHE, "w") as f:
-            json.dump({"fetched": time.time(), "registry": reg}, f)
+            json.dump({"format": DEVICES_FORMAT, "fetched": time.time(), "registry": reg}, f)
         _registry = reg
     except (OSError, ValueError):
         # offline or ATK changed its site: keep an old copy, else know no mice
@@ -412,11 +419,12 @@ def lookup(family, key, vid, pid):
     usb = f"{vid:04x}:{pid:04x}"
     entry = fam["cid"].get(key) or fam["pid"].get(usb)
     receiver = reg["receivers"].get(usb)
+    rx_flags = reg.get("receiver_flags", {}).get(usb, [])
     if entry:
         return {"key": key, "name": entry[0], "sensor": entry[1], "flags": entry[2],
-                "receiver": receiver}
+                "receiver": receiver, "receiver_flags": rx_flags}
     return {"key": key, "name": f"Unknown ATK mouse ({key or 'no ID'})", "sensor": None,
-            "flags": [], "receiver": receiver}
+            "flags": [], "receiver": receiver, "receiver_flags": rx_flags}
 
 
 # ---- device discovery -------------------------------------------------------
@@ -523,46 +531,86 @@ class _HidDevice:
                     return reply
         raise Asleep("Mouse did not answer. Move it to wake it up.")
 
-    def usb_max_rate(self, receiver_name=None):
-        """Highest polling rate the USB link can carry.
+    def max_rate(self):
+        """Highest polling rate to offer: what the mouse reports, else all of them."""
+        return LINK_MAX_RATE.get(self.link_type(), 8000)
 
-        Full-speed USB polls at most every 1 ms (1000 Hz). High-speed links
-        report their interrupt interval, for example 125us for 8000 Hz.
-        A receiver named "1K"/"4K"/"8K" caps it further.
-        """
-        cap = 1000
-        try:
-            hid_dev = os.path.realpath(f"/sys/class/hidraw/{os.path.basename(self.node)}/device")
-            intf = os.path.dirname(hid_dev)
-            with open(os.path.join(os.path.dirname(intf), "speed")) as f:
-                speed = float(f.read())
-            if speed >= 480:
-                for iv in glob.glob(f"{intf}/ep_*/interval"):
-                    with open(iv) as f:
-                        t = f.read().strip()
-                    us = float(t[:-2]) if t.endswith("us") else float(t[:-2]) * 1000
-                    cap = max(cap, min(8000, int(1_000_000 / us)))
-        except (OSError, ValueError):
-            pass
-        if receiver_name:
-            m = re.search(r"(\d)\s*k\b", receiver_name, re.I)
-            if m:
-                cap = min(cap, int(m.group(1)) * 1000)
-        return cap
+
+# The link type a mouse reports, as ATK HUB numbers it, and the fastest rate it
+# carries. ATK HUB offers only 1000 Hz on "wired 2K/4K"; their names are used here.
+# A mouse that doesn't report its link is offered every rate.
+LINK_MAX_RATE = {0: 1000,    # 1K receiver
+                 1: 4000,    # 4K receiver
+                 2: 1000,    # cable, 1K
+                 3: 8000,    # cable, 8K
+                 4: 2000,    # 2K receiver
+                 5: 8000,    # 8K receiver
+                 6: 2000,    # cable, 2K
+                 7: 4000,    # cable, 4K
+                 8: 8000}    # NearLink
+
+
+# The DPI light: mode "off"/"steady"/"breathing", brightness and speed as
+# 0 (low/slow), 1 or 2 (high/fast). Each family stores its own raw values.
+LIGHT_MODES = ("off", "steady", "breathing")
+
+
+def nearest_level(raw, table):
+    """The level whose raw value is closest to what the mouse stores."""
+    return min(range(len(table)), key=lambda i: abs(table[i] - raw))
+
+
+def rgb_hex(rgb):
+    return "#%02x%02x%02x" % tuple(rgb)
+
+
+def hex_rgb(color):
+    return [int(color[i:i + 2], 16) for i in (1, 3, 5)]
+
+
+# Receiver lights, as ATK HUB offers them. "full" receivers take an effect,
+# colour, brightness and speed; "simple" ones (singleRgb) only show a status.
+RX_FULL_MODES = [(0, "Off"), (1, "Colour flow"), (2, "Breathing, one colour"),
+                 (3, "Steady"), (4, "Neon"), (5, "Breathing, mixed colours"), (6, "Flashing")]
+RX_SIMPLE_MODES = [(0, "Off"), (1, "Show polling rate"), (2, "Show battery level"),
+                   (3, "Low battery warning")]
+RX_NO_SPEED = {0, 3, 6}          # modes where ATK HUB greys out each control
+RX_NO_BRIGHTNESS = {0}
+RX_COLOR = {2, 3}
+
+
+def receiver_light_kind(flags):
+    """'full', 'simple' or None, from the receiver's ATK HUB flags.
+
+    gatherRgb receivers use another mode list that isn't supported yet.
+    """
+    if "noDongleRGB" in flags or "gatherRgb" in flags:
+        return None
+    return "simple" if "singleRgb" in flags else "full"
 
 
 # ---- COMPX ------------------------------------------------------------------
+CX_MOUSE_INFO = 0x01      # ATK HUB's "DownLoadData"; sent only as its info read
 CX_BATTERY = 0x04
 CX_SET_EEPROM = 0x07
 CX_GET_EEPROM = 0x08
 CX_FACTORY_RESET = 0x09
 CX_CID_MID = 0x10
 CX_MOUSE_VERSION = 0x12
+CX_SET_RX_SIMPLE_LIGHT = 0x14
+CX_GET_RX_SIMPLE_LIGHT = 0x15
+CX_SET_LONG_RANGE = 0x16
+CX_GET_LONG_RANGE = 0x17
+CX_SET_RX_LIGHT = 0x18
+CX_GET_RX_LIGHT = 0x19
 CX_DONGLE_VERSION = 0x1D
 
-# Anything else (firmware upgrade 0x0D, raw download 0x01, pairing) is refused.
+# Anything else (firmware upgrade 0x0D, pairing) is refused. 0x01 goes only
+# through link_type(), in the exact form ATK HUB reads it.
 CX_ALLOWED = {CX_BATTERY, CX_SET_EEPROM, CX_GET_EEPROM, CX_FACTORY_RESET,
-              CX_CID_MID, CX_MOUSE_VERSION, CX_DONGLE_VERSION}
+              CX_CID_MID, CX_MOUSE_VERSION, CX_DONGLE_VERSION, CX_SET_LONG_RANGE,
+              CX_GET_LONG_RANGE, CX_SET_RX_LIGHT, CX_GET_RX_LIGHT, CX_SET_RX_SIMPLE_LIGHT,
+              CX_GET_RX_SIMPLE_LIGHT}
 
 ADDR_RATE_ROW = 0x00      # [rate,~, maxDpi(stage count),~, activeStage,~, bhop,~, btnMode,~]
 ADDR_LOD = 0x0A           # [code,~]
@@ -570,6 +618,14 @@ ADDR_DPI_ROWS = [0x0C, 0x14, 0x1C, 0x24]    # two stages per 8-byte row
 ADDR_DPI_3955 = 0x1B00    # PAW3955 mice: one 6-byte row per stage instead
 ADDR_KEY0 = 0x60          # 4 bytes per button
 ADDR_FUNC_ROW = 0xA9      # [debounce,~, motionSync,~, sleep/10,~, lineCorr,~, ripple,~]
+ADDR_DPI_COLOR_ROWS = [0x2C, 0x34, 0x3C, 0x44]  # two stages per row: [R, G, B, ~] each
+ADDR_LIGHT_ROW = 0x4C     # [mode,~, brightness,~, speed,~, on,~]
+CX_LIGHT_MODES = {"steady": 1, "breathing": 2}
+CX_LIGHT_BRIGHTNESS = (16, 128, 255)
+CX_LIGHT_SPEED = (1, 3, 5)
+CX_RX_SPEED = (0, 5, 9)
+CX_RX_BRIGHTNESS = (0, 5, 9)
+CX_RX_SLEEP = (1, 5, 10)  # minutes
 ADDR_SENSOR_ROW = 0xB5    # [sleepOn,~, sleep/10,~, sensorMode,~]
 ADDR_SHORTCUT0 = 0x100    # 32 bytes per button
 
@@ -636,7 +692,8 @@ class CompxMouse(_HidDevice):
         return bytes(b)
 
     def xfer(self, cmd, addr=0, length=0, payload=()):
-        if cmd not in CX_ALLOWED:
+        if cmd not in CX_ALLOWED and not (cmd == CX_MOUSE_INFO and addr == 0 and length == 8
+                                          and len(payload) == 4):
             raise DeviceError(f"command 0x{cmd:02x} is not allowed")
 
         def match(raw):
@@ -698,6 +755,17 @@ class CompxMouse(_HidDevice):
             pass
         return lookup("compx", key, self.vid, self.pid)
 
+    def link_type(self):
+        """The link the mouse reports (see LINK_MAX_RATE), or None.
+
+        ATK HUB sends 4 random bytes; the reply echoes them scrambled, then
+        CID, MID and the link type.
+        """
+        try:
+            return self.xfer(CX_MOUSE_INFO, 0, 8, list(os.urandom(4)))[11]
+        except DeviceError:
+            return None
+
     @staticmethod
     def competitive_max_allowed(key, version):
         """ATK HUB's rule: CID 1 mice always; others from a listed firmware version on."""
@@ -757,7 +825,7 @@ class CompxMouse(_HidDevice):
         s["rate_hz"] = CX_RATES_REV.get(rate[0])
         s["sensor_mode"] = self.read(ADDR_SENSOR_ROW, 6)[4]
         # never hide a rate the mouse is already set to
-        max_rate = max(self.usb_max_rate(s["id"]["receiver"]), s["rate_hz"] or 0)
+        max_rate = max(self.max_rate(), s["rate_hz"] or 0)
         s["caps"] = capabilities(
             "compx", s["id"]["sensor"], s["id"]["flags"], max_rate, CX_RATES,
             self.competitive_max_allowed(s["id"]["key"], s["versions"].get("mouse")),
@@ -776,6 +844,9 @@ class CompxMouse(_HidDevice):
         func = self.read(ADDR_FUNC_ROW, 10)
         s.update(debounce_ms=func[0], motion_sync=bool(func[2]), sleep_s=func[4] * 10,
                  angle_snap=bool(func[6]), ripple=bool(func[8]))
+        s["long_range"] = self.long_range(s["id"]["flags"])
+        s["light"], s["stage_colors"] = self.light(s["id"]["flags"])
+        s["receiver_light"] = self.receiver_light(s["id"]["receiver_flags"])
         keys = self.read_long(ADDR_KEY0, 24)
         s["buttons"] = [cx_decode_key(*keys[4 * i:4 * i + 3]) for i in range(6)]
         return s
@@ -857,6 +928,81 @@ class CompxMouse(_HidDevice):
     def set_ripple(self, on):
         self.patch_row(ADDR_FUNC_ROW, 10, 8, int(on))
 
+    def long_range(self, flags):
+        """Long range mode on/off, or None where ATK HUB doesn't offer it."""
+        if "noFarDistance" in flags:
+            return None
+        try:
+            return bool(self.xfer(CX_GET_LONG_RANGE)[5])
+        except DeviceError:
+            return None
+
+    def light(self, flags):
+        """(DPI light settings, 8 stage colours), or (None, None) without a light."""
+        if "noDpiRGB" in flags:
+            return None, None
+        row = self.read(ADDR_LIGHT_ROW, 8)
+        mode = {v: k for k, v in CX_LIGHT_MODES.items()}.get(row[0], "steady")
+        light = {"mode": mode if row[6] else "off",
+                 "brightness": nearest_level(row[2], CX_LIGHT_BRIGHTNESS),
+                 "speed": nearest_level(row[4], CX_LIGHT_SPEED)}
+        colors = []
+        for a in ADDR_DPI_COLOR_ROWS:
+            row = self.read(a, 8)
+            colors += [rgb_hex(row[0:3]), rgb_hex(row[4:7])]
+        return light, colors
+
+    def set_light(self, mode, brightness, speed):
+        row = self.read(ADDR_LIGHT_ROW, 8)
+        if mode != "off":                      # off keeps the last effect for next time
+            row[0:2] = pair(CX_LIGHT_MODES[mode])
+        row[2:6] = pair(CX_LIGHT_BRIGHTNESS[brightness]) + pair(CX_LIGHT_SPEED[speed])
+        row[6:8] = pair(int(mode != "off"))
+        self.write(ADDR_LIGHT_ROW, row)
+
+    def set_stage_color(self, i, color):
+        addr = ADDR_DPI_COLOR_ROWS[i >> 1]
+        row = self.read(addr, 8)
+        r, g, b = hex_rgb(color)
+        o = 4 * (i & 1)
+        row[o:o + 4] = [r, g, b, inv(r + g + b)]
+        self.write(addr, row)
+
+    def receiver_light(self, flags):
+        """The receiver's light settings, or None if it has none we can drive.
+
+        A receiver without a light refuses the read, whatever ATK HUB's list says.
+        """
+        kind = receiver_light_kind(flags) if self.receiver else None
+        try:
+            if kind == "simple":
+                return {"kind": kind, "mode": self.xfer(CX_GET_RX_SIMPLE_LIGHT)[5]}
+            if kind == "full":
+                r = self.xfer(CX_GET_RX_LIGHT)
+                return {"kind": kind, "mode": r[5], "color": rgb_hex(r[6:9]),
+                        "speed": nearest_level(r[9], CX_RX_SPEED),
+                        "brightness": nearest_level(r[10], CX_RX_BRIGHTNESS),
+                        "sleep": nearest_level(r[11], CX_RX_SLEEP)}
+        except DeviceError:
+            pass
+        return None
+
+    def set_receiver_light(self, light):
+        """Write a dict shaped like receiver_light()'s, then read it back."""
+        if light["kind"] == "simple":
+            self.xfer(CX_SET_RX_SIMPLE_LIGHT, 0, 10, [light["mode"]])
+        else:
+            self.xfer(CX_SET_RX_LIGHT, 0, 10,
+                      [light["mode"], *hex_rgb(light["color"]), CX_RX_SPEED[light["speed"]],
+                       CX_RX_BRIGHTNESS[light["brightness"]], CX_RX_SLEEP[light["sleep"]]])
+        if self.receiver_light(["singleRgb"] if light["kind"] == "simple" else []) != light:
+            raise DeviceError("receiver light did not stick")
+
+    def set_long_range(self, on):
+        self.xfer(CX_SET_LONG_RANGE, 0, 10, [int(on)])
+        if self.xfer(CX_GET_LONG_RANGE)[5] != int(on):
+            raise DeviceError("long range mode did not stick")
+
     def set_sleep(self, seconds):
         # Two timers: closeLedTime in the 0xA9 row and the sensor's own in 0xB5.
         units = round(seconds / 10)
@@ -885,6 +1031,7 @@ BM_BATTERY = 0x07
 BM_GET_CONFIG = 0x09
 BM_SET_LINEAR_CORRECTION = 0x0B
 BM_SET_RIPPLE = 0x0C
+BM_SET_LIGHT = 0x14
 BM_SET_MOTION_SYNC = 0x0D
 BM_CHARGING = 0x0F
 BM_RESET = 0x13
@@ -892,21 +1039,32 @@ BM_SET_SLEEP = 0x15
 BM_SET_DEBOUNCE = 0x16
 BM_GET_ADDRESS = 0x17
 BM_MOUSE_VERSION = 0x1C
+BM_GET_LINK_TYPE = 0x1A
+BM_SET_LONG_RANGE = 0x1B
 BM_SET_SENSOR_MODE = 0x1F
 BM_CID_MID = 0x4A
+BM_SET_RX_LIGHT = 0x85                  # same number as an upgrade command in another frame format
+BM_GET_RX_LIGHT = 0x86
 BM_DONGLE_VERSION = 0x88
 
 # Pairing, address-space writes and the upgrade commands are never sent.
 BM_ALLOWED = {BM_SET_RATE, BM_SET_DPI, BM_SET_LOD, BM_SET_BUTTON, BM_BATTERY, BM_GET_CONFIG,
               BM_SET_LINEAR_CORRECTION, BM_SET_RIPPLE, BM_SET_MOTION_SYNC, BM_CHARGING,
               BM_RESET, BM_SET_SLEEP, BM_SET_DEBOUNCE, BM_GET_ADDRESS, BM_MOUSE_VERSION,
-              BM_SET_SENSOR_MODE, BM_CID_MID, BM_DONGLE_VERSION}
-BM_DONGLE_CMDS = {BM_DONGLE_VERSION}    # answered by the receiver itself (target 0)
+              BM_SET_SENSOR_MODE, BM_CID_MID, BM_DONGLE_VERSION, BM_GET_LINK_TYPE,
+              BM_SET_LONG_RANGE, BM_SET_LIGHT, BM_SET_RX_LIGHT, BM_GET_RX_LIGHT}
+BM_DONGLE_CMDS = {BM_DONGLE_VERSION, BM_GET_LINK_TYPE, BM_SET_RX_LIGHT, BM_GET_RX_LIGHT}    # answered by the receiver itself (target 0)
 
 BM_RATES = {1000: 0, 500: 1, 250: 2, 125: 3, 8000: 4, 4000: 5, 2000: 6}
 BM_RATES_REV = {v: k for k, v in BM_RATES.items()}
 BM_SENSOR_MODES = (0, 4, 5)             # Basic, Competitive (Game), Competitive Max
 BM_ADDR_SENSOR_MODE = 74
+BM_ADDR_LONG_RANGE = 75
+BM_ADDR_LIGHT = 76                      # [mode, brightness, speed]
+BM_LIGHT_MODES = {"off": 0, "steady": 2, "breathing": 1}
+BM_LIGHT_BRIGHTNESS = (85, 170, 255)
+BM_LIGHT_SPEED = (10, 15, 20)
+BM_RX_BRIGHTNESS = (10, 50, 100)        # receiver speed is stored as the level itself
 BM_ADDR_DPI = 1                         # 70 bytes: [active, count, 8 x (x, y, B, G, R, pad)]
 BM_ADDR_BUTTONS = 82                    # 5 bytes per button
 
@@ -969,6 +1127,8 @@ class BitMouse(_HidDevice):
             raise DeviceError(f"command 0x{cmd:02x} is not allowed")
         if cmd == BM_CID_MID and list(payload)[:1] != [0]:
             raise DeviceError("only reading the mouse ID is allowed")
+        if cmd in (BM_SET_RX_LIGHT, BM_GET_RX_LIGHT) and (param_len, cmd_len) != (11, 9):
+            raise DeviceError("receiver light commands go only in ATK HUB's own form")
         if cmd in BM_DONGLE_CMDS:
             target = 0
 
@@ -983,6 +1143,13 @@ class BitMouse(_HidDevice):
 
     def config(self):
         return self.xfer(BM_GET_CONFIG, 20, 18)
+
+    def link_type(self):
+        """The link the mouse reports (see LINK_MAX_RATE), or None."""
+        try:
+            return self.xfer(BM_GET_LINK_TYPE, 2, 1)[0]
+        except (DeviceError, IndexError):
+            return None
 
     def read_addr(self, addr, length):
         """Read up to 10 bytes of the mouse's address space."""
@@ -1071,7 +1238,7 @@ class BitMouse(_HidDevice):
         s["rate_hz"] = BM_RATES_REV.get(c[2])
         s["sensor_mode"] = self.read_addr(BM_ADDR_SENSOR_MODE, 1)[0]
         flags = s["id"]["flags"]
-        max_rate = max(self.usb_max_rate(s["id"]["receiver"]), s["rate_hz"] or 0)
+        max_rate = max(self.max_rate(), s["rate_hz"] or 0)
         s["caps"] = capabilities(
             "bitmouse", s["id"]["sensor"], flags, max_rate, BM_RATES,
             "noAthleticsMax" not in flags and s["id"]["sensor"] is not None,
@@ -1086,6 +1253,9 @@ class BitMouse(_HidDevice):
         s["lod_code"] = c[5] + 1                       # stored as code - 1
         s.update(motion_sync=bool(c[6]), angle_snap=bool(c[7]), ripple=bool(c[8]),
                  sleep_s=c[9] | c[10] << 8, debounce_ms=c[11])
+        s["long_range"] = self.long_range(flags)
+        s["light"], s["stage_colors"] = self.light(flags, t)
+        s["receiver_light"] = self.receiver_light(s["id"]["receiver_flags"])
         keys = []
         for r in range(3):
             keys += self.read_addr(BM_ADDR_BUTTONS + 10 * r, 10)
@@ -1116,6 +1286,72 @@ class BitMouse(_HidDevice):
 
     def set_ripple(self, on):
         self._set(BM_SET_RIPPLE, 3, 1, [int(on)], lambda: self.config()[8] == int(on))
+
+    def long_range(self, flags):
+        """Long range mode on/off, or None where ATK HUB doesn't offer it."""
+        if "noFarDistance" in flags:
+            return None
+        try:
+            return bool(self.read_addr(BM_ADDR_LONG_RANGE, 1)[0])
+        except (DeviceError, IndexError):
+            return None
+
+    def light(self, flags, table):
+        """(DPI light settings, 8 stage colours), or (None, None) without a light."""
+        if "noDpiRGB" in flags:
+            return None, None
+        try:
+            raw = self.read_addr(BM_ADDR_LIGHT, 3)
+        except DeviceError:
+            return None, None
+        mode = {v: k for k, v in BM_LIGHT_MODES.items()}.get(raw[0], "steady")
+        light = {"mode": mode, "brightness": nearest_level(raw[1], BM_LIGHT_BRIGHTNESS),
+                 "speed": nearest_level(raw[2], BM_LIGHT_SPEED)}
+        return light, [rgb_hex(st["rgb"]) for st in table["stages"]]
+
+    def set_light(self, mode, brightness, speed):
+        want = [BM_LIGHT_MODES[mode], BM_LIGHT_BRIGHTNESS[brightness], BM_LIGHT_SPEED[speed]]
+        self._set(BM_SET_LIGHT, 6, 3, want, lambda: self.read_addr(BM_ADDR_LIGHT, 3) == want)
+
+    def set_stage_color(self, i, color):
+        t = self.read_dpi_table()
+        st = t["stages"][i]
+        self._write_stage(i, st["x"], hex_rgb(color), i == t["active"])
+        if rgb_hex(self.read_dpi_table()["stages"][i]["rgb"]) != color:
+            raise DeviceError("colour did not stick")
+
+    def receiver_light(self, flags):
+        """The receiver's light settings, or None if it has none we can drive."""
+        kind = receiver_light_kind(flags) if self.receiver else None
+        if kind is None:
+            return None
+        try:
+            p = self.xfer(BM_GET_RX_LIGHT, 11, 9)
+        except DeviceError:
+            return None
+        # [on, mode, brightness, speed, ?, R, G, B, sleep]; ATK HUB shows no sleep here
+        self.rx_light_raw = p[:9]
+        light = {"kind": kind, "mode": p[1]}
+        if kind == "full":
+            light.update(color=rgb_hex(p[5:8]), speed=min(p[3], 2),
+                         brightness=nearest_level(p[2], BM_RX_BRIGHTNESS), sleep=None)
+        return light
+
+    def set_receiver_light(self, light):
+        """Write a dict shaped like receiver_light()'s, then read it back."""
+        raw = list(getattr(self, "rx_light_raw", [0] * 9))
+        raw[0], raw[1] = 1, light["mode"]
+        if light["kind"] == "full":
+            raw[2], raw[3] = BM_RX_BRIGHTNESS[light["brightness"]], light["speed"]
+            raw[5:8] = hex_rgb(light["color"])
+        self.xfer(BM_SET_RX_LIGHT, 11, 9, raw)
+        flags = ["singleRgb"] if light["kind"] == "simple" else []
+        if self.receiver_light(flags) != light:
+            raise DeviceError("receiver light did not stick")
+
+    def set_long_range(self, on):
+        self._set(BM_SET_LONG_RANGE, 3, 1, [int(on)],
+                  lambda: self.read_addr(BM_ADDR_LONG_RANGE, 1)[0] == int(on))
 
     def set_sleep(self, seconds):
         def check():
