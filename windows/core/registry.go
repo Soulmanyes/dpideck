@@ -34,7 +34,14 @@ const (
 )
 
 var familyByUsagePage = map[int]string{0xFF04: "compx", 0xFF05: "bitmouse"}
-var keepFlags = map[string]bool{"noBottomButton": true, "noZeroKeyDebounce": true, "noAthleticsMax": true}
+var keepFlags = map[string]bool{"noBottomButton": true, "noZeroKeyDebounce": true, "noAthleticsMax": true,
+	"noFarDistance": true, "noDpiRGB": true}
+
+// What kind of light a receiver has.
+var receiverFlags = map[string]bool{"singleRgb": true, "gatherRgb": true, "noDongleRGB": true}
+
+// devicesFormat is bumped when the cached data changes, so old caches refresh.
+const devicesFormat = 3
 
 // Entry is [name, sensor, flags], stored as a JSON array like the Linux cache.
 type Entry struct {
@@ -73,14 +80,16 @@ type Registry struct {
 	Compx     FamilyTable       `json:"compx"`
 	Bitmouse  FamilyTable       `json:"bitmouse"`
 	Receivers map[string]string `json:"receivers"`
-	Recovery  []string          `json:"recovery"`
+	// RxFlags: per receiver USB ID, its light flags (only receivers that have some)
+	RxFlags  map[string][]string `json:"receiver_flags"`
+	Recovery []string            `json:"recovery"`
 }
 
 func emptyRegistry() *Registry {
 	return &Registry{
 		Compx:     FamilyTable{map[string]Entry{}, map[string]Entry{}},
 		Bitmouse:  FamilyTable{map[string]Entry{}, map[string]Entry{}},
-		Receivers: map[string]string{}, Recovery: []string{},
+		Receivers: map[string]string{}, RxFlags: map[string][]string{}, Recovery: []string{},
 	}
 }
 
@@ -97,19 +106,19 @@ func usbKey(vid, pid uint16) string { return fmt.Sprintf("%04x:%04x", vid, pid) 
 func (r *Registry) Lookup(family, key string, vid, pid uint16) Ident {
 	fam := r.family(family)
 	usb := usbKey(vid, pid)
-	receiver := r.Receivers[usb]
+	receiver, rxFlags := r.Receivers[usb], r.RxFlags[usb]
 	e, ok := fam.Cid[key]
 	if !ok || key == "" {
 		e, ok = fam.Pid[usb]
 	}
 	if ok {
-		return Ident{Key: key, Name: e.Name, Sensor: e.Sensor, Flags: e.Flags, Receiver: receiver}
+		return Ident{Key: key, Name: e.Name, Sensor: e.Sensor, Flags: e.Flags, Receiver: receiver, ReceiverFlags: rxFlags}
 	}
 	k := key
 	if k == "" {
 		k = "no ID"
 	}
-	return Ident{Key: key, Name: fmt.Sprintf("Unknown ATK mouse (%s)", k), Receiver: receiver}
+	return Ident{Key: key, Name: fmt.Sprintf("Unknown ATK mouse (%s)", k), Receiver: receiver, ReceiverFlags: rxFlags}
 }
 
 func (r *Registry) IsReceiver(vid, pid uint16) bool {
@@ -137,7 +146,6 @@ var (
 	reCidMid  = regexp.MustCompile(`mouseCidMid:"(\d+,\d+)"`)
 	reEntry   = regexp.MustCompile(`src="(https://bpcdn\.atkgear\.com/[^"]+/static/index-[^"]+\.js)"`)
 	reDep     = regexp.MustCompile(`"(?:\./|static/)([\w.-]+\.js)"`)
-	reRateK   = regexp.MustCompile(`(?i)(\d)\s*k\b`)
 )
 
 // filterObjects returns the text of every {vendorId:...} device filter in a script.
@@ -192,6 +200,16 @@ func ParseDeviceTables(scripts []string) *Registry {
 			}
 			if strings.Contains(o, "receiver:!0") {
 				reg.Receivers[usb] = name
+				var flags []string
+				for _, f := range reFlag.FindAllStringSubmatch(o, -1) {
+					if receiverFlags[f[1]] && !contains(flags, f[1]) {
+						flags = append(flags, f[1])
+					}
+				}
+				if flags != nil {
+					sort.Strings(flags)
+					reg.RxFlags[usb] = flags
+				}
 				continue
 			}
 			sensor := reSensor.FindStringSubmatch(o)
@@ -329,6 +347,7 @@ func ConfigDir() string {
 }
 
 type cacheFile[T any] struct {
+	Format   int     `json:"format,omitempty"`
 	Fetched  float64 `json:"fetched"`
 	Registry *T      `json:"registry,omitempty"`
 	Table    *T      `json:"table,omitempty"`
@@ -354,14 +373,14 @@ func GetRegistry(refresh bool) *Registry {
 	if b, err := os.ReadFile(path); err == nil && json.Unmarshal(b, &cached) == nil && cached.Registry != nil {
 		haveCache = true
 		age := time.Since(time.Unix(int64(cached.Fetched), 0))
-		if !refresh && age < devicesMaxAge {
+		if !refresh && cached.Format == devicesFormat && age < devicesMaxAge {
 			registry = cached.Registry
 			return registry
 		}
 	}
 	if reg, err := FetchRegistry(); err == nil {
 		os.MkdirAll(ConfigDir(), 0o755)
-		if b, err := json.Marshal(cacheFile[Registry]{Fetched: float64(time.Now().Unix()), Registry: reg}); err == nil {
+		if b, err := json.Marshal(cacheFile[Registry]{Format: devicesFormat, Fetched: float64(time.Now().Unix()), Registry: reg}); err == nil {
 			os.WriteFile(path, b, 0o644)
 		}
 		registry = reg
@@ -432,13 +451,26 @@ func fetchUpgrade() (map[string]string, error) {
 	return table, nil
 }
 
-// UsbMaxRate: the highest polling rate to offer. The Linux app also reads the
-// USB link speed; Windows has no cheap way, so a receiver named "4K"/"8K" sets
-// the cap and anything else gets 1000 Hz (or the mouse's current rate if higher).
-func UsbMaxRate(receiverName string) int {
-	if m := reRateK.FindStringSubmatch(receiverName); m != nil {
-		n, _ := strconv.Atoi(m[1])
-		return n * 1000
+// LinkMaxRate: the link type a mouse reports, as ATK HUB numbers it, and the
+// fastest rate it carries. ATK HUB offers only 1000 Hz on "wired 2K/4K"; their
+// names are used here.
+var LinkMaxRate = map[int]int{
+	0: 1000, // 1K receiver
+	1: 4000, // 4K receiver
+	2: 1000, // cable, 1K
+	3: 8000, // cable, 8K
+	4: 2000, // 2K receiver
+	5: 8000, // 8K receiver
+	6: 2000, // cable, 2K
+	7: 4000, // cable, 4K
+	8: 8000, // NearLink
+}
+
+// MaxRate: the highest polling rate to offer, from the link type the mouse
+// reports. A mouse that doesn't report it is offered every rate.
+func MaxRate(linkType int) int {
+	if hz, ok := LinkMaxRate[linkType]; ok {
+		return hz
 	}
-	return 1000
+	return 8000
 }

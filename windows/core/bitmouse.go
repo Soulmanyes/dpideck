@@ -29,10 +29,17 @@ const (
 	bmSetDebounce    = 0x16
 	bmGetAddress     = 0x17
 	bmMouseVersion   = 0x1C
+	bmGetLinkType    = 0x1A
+	bmSetLongRange   = 0x1B
 	bmSetSensorMode  = 0x1F
+	bmSetLight       = 0x14
 	bmCidMid         = 0x4A
+	bmSetRxLight     = 0x85 // same number as an upgrade command in another frame format
+	bmGetRxLight     = 0x86
 	bmDongleVersion  = 0x88
 	bmAddrSensorMode = 74
+	bmAddrLongRange  = 75
+	bmAddrLight      = 76 // [mode, brightness, speed]
 	bmAddrDPI        = 1  // 70 bytes: [active, count, 8 x (x, y, B, G, R, pad)]
 	bmAddrButtons    = 82 // 5 bytes per button
 )
@@ -41,7 +48,8 @@ const (
 var bmAllowed = map[byte]bool{bmSetRate: true, bmSetDPI: true, bmSetLod: true, bmSetButton: true,
 	bmBattery: true, bmGetConfig: true, bmSetLinearCorr: true, bmSetRipple: true, bmSetMotionSync: true,
 	bmCharging: true, bmReset: true, bmSetSleep: true, bmSetDebounce: true, bmGetAddress: true,
-	bmMouseVersion: true, bmSetSensorMode: true, bmCidMid: true, bmDongleVersion: true}
+	bmMouseVersion: true, bmSetSensorMode: true, bmCidMid: true, bmDongleVersion: true,
+	bmGetLinkType: true, bmSetLongRange: true, bmSetLight: true, bmSetRxLight: true, bmGetRxLight: true}
 
 var BmRates = map[int]int{1000: 0, 500: 1, 250: 2, 125: 3, 8000: 4, 4000: 5, 2000: 6}
 var BmSensorModes = [3]int{0, 4, 5} // Basic, Competitive (Game), Competitive Max
@@ -117,6 +125,8 @@ type BitMouse struct {
 	Reg      *Registry
 	target   int
 	probed   bool
+	// rxLightRaw: the receiver light reply, so a write keeps the bytes it doesn't change
+	rxLightRaw []int
 }
 
 // NewBitMouse: ATK HUB addresses the mouse as target 1 through a receiver and 0
@@ -141,7 +151,10 @@ func (m *BitMouse) xferTo(cmd byte, paramLen, cmdLen int, payload []int, target 
 	if cmd == bmCidMid && (len(payload) == 0 || payload[0] != 0) {
 		return nil, devErr("only reading the mouse ID is allowed")
 	}
-	if cmd == bmDongleVersion {
+	if (cmd == bmSetRxLight || cmd == bmGetRxLight) && (paramLen != 11 || cmdLen != 9) {
+		return nil, devErr("receiver light commands go only in ATK HUB's own form")
+	}
+	if cmd == bmDongleVersion || cmd == bmGetLinkType || cmd == bmSetRxLight || cmd == bmGetRxLight {
 		target = 0 // answered by the receiver itself
 	}
 	r, err := exchange(m.T, BmPack(cmd, paramLen, cmdLen, payload, target), func(raw []byte) ([]byte, error) {
@@ -169,6 +182,15 @@ func (m *BitMouse) xfer(cmd byte, paramLen, cmdLen int, payload ...int) ([]int, 
 }
 
 func (m *BitMouse) config() ([]int, error) { return m.xfer(bmGetConfig, 20, 18) }
+
+// LinkType: the link the mouse reports (see LinkMaxRate), or -1.
+func (m *BitMouse) LinkType() int {
+	r, err := m.xfer(bmGetLinkType, 2, 1)
+	if err != nil || len(r) == 0 {
+		return -1
+	}
+	return r[0]
+}
 
 func (m *BitMouse) readAddr(addr, length int) ([]int, error) {
 	p, err := m.xfer(bmGetAddress, 10, 13, addr&0xFF, addr>>8, length)
@@ -293,7 +315,7 @@ func (m *BitMouse) ReadState() (*State, error) {
 		return nil, err
 	}
 	s.SensorMode = mode[0]
-	maxRate := max(UsbMaxRate(s.ID.Receiver), s.RateHz)
+	maxRate := max(MaxRate(m.LinkType()), s.RateHz)
 	s.Caps = Capabilities("bitmouse", s.ID.Sensor, s.ID.Flags, maxRate, BmRates,
 		!contains(s.ID.Flags, "noAthleticsMax") && s.ID.Sensor != "", s.SensorMode, BmSensorModes)
 	t, err := m.readDPITable()
@@ -325,6 +347,9 @@ func (m *BitMouse) ReadState() (*State, error) {
 	s.LodCode = c[5] + 1 // stored as code - 1
 	s.MotionSync, s.AngleSnap, s.Ripple = c[6] != 0, c[7] != 0, c[8] != 0
 	s.SleepS, s.DebounceMs = c[9]|c[10]<<8, c[11]
+	s.LongRange = m.longRange(s.ID.Flags)
+	s.Light, s.StageColors = m.light(s.ID.Flags, t)
+	s.RxLight = m.receiverLight(s.ID.ReceiverFlags)
 	var keys []int
 	for r := 0; r < 3; r++ {
 		p, err := m.readAddr(bmAddrButtons+10*r, 10)
@@ -380,6 +405,124 @@ func (m *BitMouse) SetMotionSync(on bool) error {
 func (m *BitMouse) SetAngleSnap(on bool) error {
 	return m.set(bmSetLinearCorr, 3, 1, []int{b2i(on)}, m.configIs(7, b2i(on)))
 }
+
+var (
+	bmLightModes      = map[string]int{"off": 0, "steady": 2, "breathing": 1}
+	bmLightBrightness = [3]int{85, 170, 255}
+	bmLightSpeed      = [3]int{10, 15, 20}
+	bmRxBrightness    = [3]int{10, 50, 100} // receiver speed is stored as the level itself
+)
+
+// light: the DPI light and the 8 stage colours, or nil without a light.
+func (m *BitMouse) light(flags []string, t *bmDPITable) (*Light, []string) {
+	if contains(flags, "noDpiRGB") {
+		return nil, nil
+	}
+	raw, err := m.readAddr(bmAddrLight, 3)
+	if err != nil {
+		return nil, nil
+	}
+	l := &Light{Mode: "steady", Brightness: nearestLevel(raw[1], bmLightBrightness),
+		Speed: nearestLevel(raw[2], bmLightSpeed)}
+	for k, v := range bmLightModes {
+		if v == raw[0] {
+			l.Mode = k
+		}
+	}
+	var colors []string
+	for _, st := range t.Stages {
+		colors = append(colors, rgbHex(st.RGB[0], st.RGB[1], st.RGB[2]))
+	}
+	return l, colors
+}
+
+func (m *BitMouse) SetLight(l Light) error {
+	want := []int{bmLightModes[l.Mode], bmLightBrightness[l.Brightness], bmLightSpeed[l.Speed]}
+	return m.set(bmSetLight, 6, 3, want, func() (bool, error) {
+		v, err := m.readAddr(bmAddrLight, 3)
+		return err == nil && v[0] == want[0] && v[1] == want[1] && v[2] == want[2], err
+	})
+}
+
+func (m *BitMouse) SetStageColor(i int, color string) error {
+	t, err := m.readDPITable()
+	if err != nil {
+		return err
+	}
+	if err := m.writeStage(i, t.Stages[i].X, hexRGB(color), i == t.Active); err != nil {
+		return err
+	}
+	if t, err = m.readDPITable(); err != nil {
+		return err
+	}
+	if c := t.Stages[i].RGB; rgbHex(c[0], c[1], c[2]) != color {
+		return devErr("colour did not stick")
+	}
+	return nil
+}
+
+// receiverLight: the receiver's light, or nil if it has none we can drive.
+func (m *BitMouse) receiverLight(flags []string) *ReceiverLight {
+	kind := ""
+	if m.Receiver {
+		kind = receiverLightKind(flags)
+	}
+	if kind == "" {
+		return nil
+	}
+	p, err := m.xfer(bmGetRxLight, 11, 9)
+	if err != nil || len(p) < 9 {
+		return nil
+	}
+	// [on, mode, brightness, speed, ?, R, G, B, sleep]; ATK HUB shows no sleep here
+	m.rxLightRaw = append([]int(nil), p[:9]...)
+	l := &ReceiverLight{Kind: kind, Mode: p[1], Sleep: -1}
+	if kind == "full" {
+		l.Color = rgbHex(p[5], p[6], p[7])
+		l.Speed, l.Brightness = min(p[3], 2), nearestLevel(p[2], bmRxBrightness)
+	}
+	return l
+}
+
+func (m *BitMouse) SetReceiverLight(l ReceiverLight) error {
+	raw := make([]int, 9)
+	copy(raw, m.rxLightRaw)
+	raw[0], raw[1] = 1, l.Mode
+	flags := []string{"singleRgb"}
+	if l.Kind == "full" {
+		flags = nil
+		c := hexRGB(l.Color)
+		raw[2], raw[3], raw[5], raw[6], raw[7] = bmRxBrightness[l.Brightness], l.Speed, c[0], c[1], c[2]
+	}
+	if _, err := m.xfer(bmSetRxLight, 11, 9, raw...); err != nil {
+		return err
+	}
+	if got := m.receiverLight(flags); got == nil || *got != l {
+		return devErr("receiver light did not stick")
+	}
+	return nil
+}
+
+// longRange: long range mode on/off, or nil where ATK HUB doesn't offer it.
+func (m *BitMouse) longRange(flags []string) *bool {
+	if contains(flags, "noFarDistance") {
+		return nil
+	}
+	v, err := m.readAddr(bmAddrLongRange, 1)
+	if err != nil {
+		return nil
+	}
+	on := v[0] != 0
+	return &on
+}
+
+func (m *BitMouse) SetLongRange(on bool) error {
+	return m.set(bmSetLongRange, 3, 1, []int{b2i(on)}, func() (bool, error) {
+		v, err := m.readAddr(bmAddrLongRange, 1)
+		return err == nil && v[0] == b2i(on), err
+	})
+}
+
 func (m *BitMouse) SetRipple(on bool) error {
 	return m.set(bmSetRipple, 3, 1, []int{b2i(on)}, m.configIs(8, b2i(on)))
 }

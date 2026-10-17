@@ -42,12 +42,19 @@ out["snap"] = snaps
 out["cx_pack"] = [[cmd, addr, n, p, list(atk.CompxMouse.pack(cmd, addr, n, p))]
                   for cmd, addr, n, p in ((0x08, 0x00, 10, []), (0x07, 0xB5, 6, [0, 85, 6, 79, 2, 83]),
                                           (0x10, 0, 0, []), (0x07, 0x1B00, 6, [1, 2, 3, 4, 5, 6]),
-                                          (0x08, 0x24, 8, []))]
+                                          (0x08, 0x24, 8, []),
+                                          # receiver lights: full, then simple (singleRgb)
+                                          (0x18, 0, 10, [3, 255, 0, 0, 5, 9, 10]), (0x19, 0, 0, []),
+                                          (0x14, 0, 10, [1]), (0x15, 0, 0, []))]
 bm = atk.BitMouse.__new__(atk.BitMouse); bm.target = 1
 out["bm_pack"] = [[cmd, pl, cl, p, t, list(bm.pack(cmd, pl, cl, p, t))]
                   for cmd, pl, cl, p, t in ((0x09, 20, 18, [], 1), (0x17, 10, 13, [74, 0, 1], 0),
                                             (0x02, 12, 10, [1, 64, 6, 64, 6, 0, 0, 255, 0, 1], 1),
-                                            (0x4A, 8, 6, [0], 0))]
+                                            (0x4A, 8, 6, [0], 0),
+                                            # DPI light, receiver light (always target 0)
+                                            (0x14, 6, 3, [2, 255, 10], 1),
+                                            (0x85, 11, 9, [1, 3, 100, 1, 0, 255, 0, 0, 0], 0),
+                                            (0x86, 11, 9, [], 0))]
 out["cx_decode"] = [[c, v1, v2, atk.cx_decode_key(c, v1, v2)] for c in range(0, 13)
                     for v1 in (0, 1, 2, 3, 4, 8, 16, 32) for v2 in (0, 5)]
 out["bm_decode"] = [[i, c, v, atk.bm_decode_key(i, c, 0, v, 0, 0)] for i in range(6)
@@ -67,5 +74,15 @@ for k, v in (("2,49", "3.00"), ("2,49", "2.99"), ("2,49", "a.00"), ("1,55", "0.1
 atk.competitive_max_table = orig
 out["cmax"] = cm
 out["cmax_table"] = table
+out["light_tables"] = {
+    "cx_modes": atk.CX_LIGHT_MODES, "cx_brightness": atk.CX_LIGHT_BRIGHTNESS,
+    "cx_speed": atk.CX_LIGHT_SPEED, "cx_rx_speed": atk.CX_RX_SPEED,
+    "cx_rx_brightness": atk.CX_RX_BRIGHTNESS, "cx_rx_sleep": atk.CX_RX_SLEEP,
+    "bm_modes": atk.BM_LIGHT_MODES, "bm_brightness": atk.BM_LIGHT_BRIGHTNESS,
+    "bm_speed": atk.BM_LIGHT_SPEED, "bm_rx_brightness": atk.BM_RX_BRIGHTNESS,
+    "rx_full": atk.RX_FULL_MODES, "rx_simple": atk.RX_SIMPLE_MODES,
+    "rx_no_speed": sorted(atk.RX_NO_SPEED), "rx_no_brightness": sorted(atk.RX_NO_BRIGHTNESS),
+    "rx_color": sorted(atk.RX_COLOR)}
+out["link_max_rate"] = {str(k): v for k, v in atk.LINK_MAX_RATE.items()}
 json.dump(out, open(os.path.join(os.path.dirname(__file__), "golden.json"), "w"))
 print({k: len(v) for k, v in out.items()})

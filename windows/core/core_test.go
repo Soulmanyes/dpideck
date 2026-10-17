@@ -2,8 +2,11 @@ package core
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"reflect"
+	"sort"
+	"strconv"
 	"testing"
 )
 
@@ -178,6 +181,81 @@ func TestFramesMatchPython(t *testing.T) {
 	}
 }
 
+// The BITMOUSE receiver light shares its number (0x85) with an upgrade command
+// that uses another frame layout. Pin ATK HUB's settings layout byte by byte:
+// [checksum, 0x72, paramLen, 0, target, cmd, cmdLen, payload...].
+func TestReceiverLightFrameLayout(t *testing.T) {
+	f := BmPack(bmSetRxLight, 11, 9, []int{1, 3, 100, 1, 0, 255, 0, 0, 0}, 0)
+	want := []byte{0x72, 11, 0, 0, 0x85, 9, 1, 3, 100, 1, 0, 255, 0, 0, 0}
+	if len(f) != 63 || string(f[1:16]) != string(want) {
+		t.Fatalf("frame % x", f[:16])
+	}
+	m := NewBitMouse(&fakeTransport{handle: func([]byte) []byte { return nil }}, 0x373B, 0x12CF, testRegistry())
+	if _, err := m.xfer(bmSetRxLight, 3, 1, 0); err == nil {
+		t.Fatal("0x85 was allowed in a form ATK HUB never sends")
+	}
+}
+
+func TestLightTablesMatchPython(t *testing.T) {
+	var py struct {
+		CxModes        map[string]int `json:"cx_modes"`
+		CxBrightness   [3]int         `json:"cx_brightness"`
+		CxSpeed        [3]int         `json:"cx_speed"`
+		CxRxSpeed      [3]int         `json:"cx_rx_speed"`
+		CxRxBrightness [3]int         `json:"cx_rx_brightness"`
+		CxRxSleep      [3]int         `json:"cx_rx_sleep"`
+		BmModes        map[string]int `json:"bm_modes"`
+		BmBrightness   [3]int         `json:"bm_brightness"`
+		BmSpeed        [3]int         `json:"bm_speed"`
+		BmRxBrightness [3]int         `json:"bm_rx_brightness"`
+		RxFull         [][2]any       `json:"rx_full"`
+		RxSimple       [][2]any       `json:"rx_simple"`
+		RxNoSpeed      []int          `json:"rx_no_speed"`
+		RxNoBrightness []int          `json:"rx_no_brightness"`
+		RxColor        []int          `json:"rx_color"`
+	}
+	json.Unmarshal(loadGolden(t)["light_tables"], &py)
+	same := func(name string, a, b any) {
+		if fmt.Sprint(a) != fmt.Sprint(b) {
+			t.Fatalf("%s: Go %v, Python %v", name, a, b)
+		}
+	}
+	same("cx modes", cxLightModes, py.CxModes)
+	same("cx brightness", cxLightBrightness, py.CxBrightness)
+	same("cx speed", cxLightSpeed, py.CxSpeed)
+	same("cx rx speed", cxRxSpeed, py.CxRxSpeed)
+	same("cx rx brightness", cxRxBrightness, py.CxRxBrightness)
+	same("cx rx sleep", cxRxSleep, py.CxRxSleep)
+	same("bm modes", bmLightModes, py.BmModes)
+	same("bm brightness", bmLightBrightness, py.BmBrightness)
+	same("bm speed", bmLightSpeed, py.BmSpeed)
+	same("bm rx brightness", bmRxBrightness, py.BmRxBrightness)
+	modes := func(ms []LightMode) (out []string) {
+		for _, m := range ms {
+			out = append(out, fmt.Sprint(m.Value, m.Label))
+		}
+		return
+	}
+	pyModes := func(ms [][2]any) (out []string) {
+		for _, m := range ms {
+			out = append(out, fmt.Sprint(m[0], m[1]))
+		}
+		return
+	}
+	same("rx full modes", modes(RxFullModes), pyModes(py.RxFull))
+	same("rx simple modes", modes(RxSimpleModes), pyModes(py.RxSimple))
+	keys := func(m map[int]bool) (out []int) {
+		for k := range m {
+			out = append(out, k)
+		}
+		sort.Ints(out)
+		return
+	}
+	same("rx no speed", keys(RxNoSpeed), py.RxNoSpeed)
+	same("rx no brightness", keys(RxNoBrightness), py.RxNoBrightness)
+	same("rx colour", keys(RxColor), py.RxColor)
+}
+
 func sameBytes(got []byte, want any) bool {
 	w := want.([]any)
 	if len(w) != len(got) {
@@ -218,6 +296,19 @@ func TestKeysMatchPython(t *testing.T) {
 			if err != nil || !reflect.DeepEqual(normalize(got), normalize(r[1])) {
 				t.Fatalf("%s %v = %v %v", name, m, got, err)
 			}
+		}
+	}
+}
+
+func TestLinkMaxRateMatchesPython(t *testing.T) {
+	want := golden[map[string]int](t, loadGolden(t), "link_max_rate")
+	if len(want) != len(LinkMaxRate) {
+		t.Fatalf("%d link types, Python has %d", len(LinkMaxRate), len(want))
+	}
+	for k, hz := range want {
+		n, _ := strconv.Atoi(k)
+		if LinkMaxRate[n] != hz {
+			t.Fatalf("link %s: %d Hz, Python says %d", k, LinkMaxRate[n], hz)
 		}
 	}
 }

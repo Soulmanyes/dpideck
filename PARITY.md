@@ -17,6 +17,9 @@ for thousands of inputs. After changing `atk.py`, run
 | Sensor modes: COMPX 0/1/2, BITMOUSE 0/4/5 | ✓ | ✓ |
 | Competitive Max gating (ATK's list / noAthleticsMax) | ✓ | ✓ |
 | Hide DPI button (noBottomButton), no "Off" debounce (noZeroKeyDebounce) | ✓ | ✓ |
+| Long range mode, hidden on noFarDistance mice | ✓ | ✓ |
+| DPI light and stage colours, hidden on noDpiRGB mice | ✓ | ✓ |
+| Receiver light (full and singleRgb receivers; hidden when the receiver refuses the read) | ✓ | ✓ |
 | BITMOUSE stage count read-only | ✓ | ✓ |
 | Backup / restore (COMPX only, same file format) | ✓ | ✓ |
 | Factory reset with confirmation | ✓ | ✓ |
@@ -24,5 +27,5 @@ for thousands of inputs. After changing `atk.py`, run
 | Device list downloaded from ATK HUB, 30-day cache | ✓ | ✓ |
 | Skip mice in firmware-recovery mode | ✓ | ✓ |
 | Prefer cable over receiver; reconnect on plug/unplug | ✓ | ✓ |
-| Polling-rate cap | USB speed + receiver name | receiver name only (cable: 1000 Hz unless already higher) |
+| Polling-rate cap | link type the mouse reports; else none | same |
 | Install | `install.sh` (udev rule, deps) | none: single exe |
