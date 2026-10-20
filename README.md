@@ -3,9 +3,10 @@
 Settings for ATK / VXE mice on Linux and Windows.
 
 A small desktop app for changing the settings of ATK / VXE mice, such as the
-**VXE MAD R**, on Linux and Windows. You don't need the ATK HUB website, so it works
-no matter which browser you use. It works over the 2.4 GHz dongle and over the USB
-cable.
+**VXE MAD R**, on Linux and Windows. ATK HUB has Windows and Mac apps but none for
+Linux, and its website needs a Chromium-based browser. DPIdeck needs neither, so it
+works no matter which browser you use. It works over the 2.4 GHz dongle and over the
+USB cable.
 
 What it can change:
 
