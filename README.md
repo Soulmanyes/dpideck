@@ -116,10 +116,12 @@ Only the first six buttons can be remapped.
 
 - **VXE MAD R (COMPX, PAW3395, firmware 3.00)**, over the 1K dongle and the cable:
   polling rate, DPI stage values up to 30000, number of stages, button mapping,
-  sensor mode, backup and restore are confirmed. Debounce, sleep timer, the three
+  sensor mode, backup and restore are confirmed. So are the DPI light and the
+  colour of each DPI stage: the light follows the setting. Debounce, sleep timer, the three
   switches and factory reset use the same write-and-check path, so a failure shows
   up as "Not saved". The mouse stores 0.7 mm lift-off, but it made no noticeable
   difference, which matches ATK HUB offering only 1 and 2 mm on this sensor.
+  The receiver light is untested: this mouse's dongle has no light.
 - **Every other mouse is untested**, including all BITMOUSE mice. The encodings
   follow ATK HUB 3.2.28's own code and OpenATK's documentation, and were checked
   against a simulated mouse, but not against real hardware. On BITMOUSE mice,
