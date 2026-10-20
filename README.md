@@ -121,8 +121,11 @@ Only the first six buttons can be remapped.
   switches and factory reset use the same write-and-check path, so a failure shows
   up as "Not saved". The mouse stores 0.7 mm lift-off, but it made no noticeable
   difference, which matches ATK HUB offering only 1 and 2 mm on this sensor.
-  The receiver light is untested: this mouse's dongle has no light.
-- **Every other mouse is untested**, including all BITMOUSE mice. The encodings
+  The receiver light is untested: this mouse's dongle has no light. The Windows app
+  was also checked with this mouse, over the dongle and the cable.
+- **ATK Blazing Sky Phantom Ultimate**: a user confirmed it works with the Windows
+  app. Which settings were checked one by one isn't recorded.
+- **Every other mouse is untested.** The encodings
   follow ATK HUB 3.2.28's own code and OpenATK's documentation, and were checked
   against a simulated mouse, but not against real hardware. On BITMOUSE mice,
   backup and restore aren't available, and the number of DPI stages is shown but
