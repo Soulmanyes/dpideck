@@ -123,8 +123,8 @@ Only the first six buttons can be remapped.
   difference, which matches ATK HUB offering only 1 and 2 mm on this sensor.
   The receiver light is untested: this mouse's dongle has no light. The Windows app
   was also checked with this mouse, over the dongle and the cable.
-- **ATK Blazing Sky Phantom Ultimate**: a user confirmed it works with the Windows
-  app. Which settings were checked one by one isn't recorded.
+- **ATK Blazing Sky Phantom Ultimate**: a user tested it with the Linux app, and
+  every setting the app offers for it worked.
 - **Every other mouse is untested.** The encodings
   follow ATK HUB 3.2.28's own code and OpenATK's documentation, and were checked
   against a simulated mouse, but not against real hardware. On BITMOUSE mice,
