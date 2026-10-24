@@ -3,6 +3,7 @@
 #   - installs Python/GTK 4/libadwaita if missing (asks for your password)
 #   - installs a udev rule so the app can talk to the mouse without root
 #   - copies the app to ~/.local/share/dpideck and adds a launcher
+#   - if the Noctalia shell is installed, adds the DPIdeck bar widget to it
 # Run ./install.sh --uninstall to remove it again.
 set -eu
 
@@ -18,6 +19,10 @@ say() { printf '\033[1m==> %s\033[0m\n' "$*"; }
 
 if [ "${1:-}" = "--uninstall" ]; then
     say "Removing DPIdeck"
+    if command -v noctalia >/dev/null; then
+        noctalia msg plugins disable soulmanyes/dpideck >/dev/null 2>&1 || true
+        noctalia msg plugins source remove $NAME >/dev/null 2>&1 || true
+    fi
     rm -rf "$DEST" "$APPS/$NAME.desktop" "$BIN/$NAME"
     if [ -e "$RULE" ] || [ -e "$OLD_RULE" ]; then
         sudo rm -f "$RULE" "$OLD_RULE"
@@ -91,6 +96,24 @@ Icon=input-mouse
 Categories=Settings;HardwareSettings;
 Keywords=mouse;dpi;vxe;atk;
 EOF
+
+# Optional bar widget for the Noctalia shell. Without Noctalia this is skipped.
+if command -v noctalia >/dev/null; then
+    say "Adding the DPIdeck bar widget to Noctalia"
+    rm -rf "$DEST/noctalia"
+    cp -r "$SRC/noctalia" "$DEST/noctalia"
+    # "add" fails if the source is already there from an earlier install
+    if noctalia msg plugins source add $NAME path "$DEST/noctalia" >/dev/null 2>&1 ||
+       noctalia msg plugins source list 2>/dev/null | grep -q "^$NAME "; then
+        noctalia msg plugins enable soulmanyes/dpideck >/dev/null 2>&1 || true
+        echo "Put the \"DPIdeck\" widget on your bar in Noctalia's bar settings."
+    else
+        echo "Noctalia isn't running, so the widget wasn't added. To add it later,"
+        echo "start Noctalia and run:"
+        echo "  noctalia msg plugins source add $NAME path \"$DEST/noctalia\""
+        echo "  noctalia msg plugins enable soulmanyes/dpideck"
+    fi
+fi
 
 say "Done. Open \"DPIdeck\" from your app menu, or run: $NAME"
 echo "If the mouse is not found, unplug it (or its dongle) and plug it back in."

@@ -66,6 +66,18 @@ To remove it:
 Your settings are stored in the mouse itself, so they stay after you uninstall,
 and they work on Windows and other computers too.
 
+### Bar widget for Noctalia (optional)
+
+If you use the [Noctalia](https://github.com/noctalia-dev) shell, `install.sh` also
+adds a small **DPIdeck** bar widget. It shows the mouse's battery level, turns red
+at 20% and below, and sends a notification when the battery drops below 15% and
+when the mouse is fully charged. It never wakes a sleeping mouse: it keeps showing
+the last level, dimmed. After installing, put the widget on your bar in Noctalia's
+bar settings.
+
+Without Noctalia this step is skipped and nothing else changes. If you install
+Noctalia later, run `./install.sh` again. The widget's files are in `noctalia/`.
+
 ## Use
 
 - Each change is saved to the mouse immediately, then read back to check that it
