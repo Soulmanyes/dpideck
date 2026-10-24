@@ -5,6 +5,10 @@
 #   - copies the app to ~/.local/share/dpideck and adds a launcher
 #   - if the Noctalia shell is installed, adds the DPIdeck bar widget to it
 # Run ./install.sh --uninstall to remove it again.
+# Without cloning the repo:
+#   curl -fsSL https://raw.githubusercontent.com/Soulmanyes/dpideck/main/install.sh | sh
+# The whole script is one { } block, so a download cut off midway runs nothing.
+{
 set -eu
 
 NAME=dpideck
@@ -16,6 +20,17 @@ RULE=/etc/udev/rules.d/70-dpideck.rules
 OLD_RULE=/etc/udev/rules.d/70-atk-mouse.rules   # before the rename to DPIdeck
 
 say() { printf '\033[1m==> %s\033[0m\n' "$*"; }
+
+# run through curl | sh: the repo isn't next to the script, so fetch it and run its installer
+if [ ! -f "$SRC/70-dpideck.rules" ]; then
+    tmp=$(mktemp -d)
+    trap 'rm -rf "$tmp"' EXIT
+    say "Downloading DPIdeck"
+    curl -fsSL https://github.com/Soulmanyes/dpideck/archive/refs/heads/main.tar.gz |
+        tar -xz -C "$tmp" --strip-components=1
+    sh "$tmp/install.sh" "$@" < /dev/tty
+    exit
+fi
 
 if [ "${1:-}" = "--uninstall" ]; then
     say "Removing DPIdeck"
@@ -117,3 +132,4 @@ fi
 
 say "Done. Open \"DPIdeck\" from your app menu, or run: $NAME"
 echo "If the mouse is not found, unplug it (or its dongle) and plug it back in."
+}

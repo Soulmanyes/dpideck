@@ -42,6 +42,12 @@ answers.
 ## Install (Linux)
 
 ```sh
+curl -fsSL https://raw.githubusercontent.com/Soulmanyes/dpideck/main/install.sh | sh
+```
+
+Or clone the repository and run the script from it:
+
+```sh
 git clone https://github.com/Soulmanyes/dpideck
 cd dpideck
 ./install.sh
@@ -55,11 +61,14 @@ The script asks for your password once. It uses it to:
 
 The script installs the app for your user only. Afterwards, open **DPIdeck**
 from your app menu, or run `dpideck` in a terminal. If the mouse is not found,
-unplug the mouse or its dongle and plug it back in.
+unplug the mouse or its dongle and plug it back in. To update, run the same
+command again.
 
 To remove it:
 
 ```sh
+curl -fsSL https://raw.githubusercontent.com/Soulmanyes/dpideck/main/install.sh | sh -s -- --uninstall
+# or, from a clone:
 ./install.sh --uninstall
 ```
 
@@ -76,7 +85,7 @@ the last level, dimmed. After installing, put the widget on your bar in Noctalia
 bar settings.
 
 Without Noctalia this step is skipped and nothing else changes. If you install
-Noctalia later, run `./install.sh` again. The widget's files are in `noctalia/`.
+Noctalia later, run the install command again. The widget's files are in `noctalia/`.
 
 ## Use
 
