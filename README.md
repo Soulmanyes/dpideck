@@ -8,6 +8,8 @@ Linux, and its website needs a Chromium-based browser. DPIdeck needs neither, so
 works no matter which browser you use. It works over the 2.4 GHz dongle and over the
 USB cable.
 
+![DPIdeck showing a VXE MAD R's DPI and sensor settings](docs/screenshot.png)
+
 What it can change:
 
 - DPI: 1 to 8 stages, up to 50000 DPI depending on the sensor, plus the active stage
