@@ -1,0 +1,13 @@
+# Noctalia plugin source for DPIdeck. install.sh adds this folder as a source.
+
+[[plugin]]
+id = "soulmanyes/dpideck"
+name = "DPIdeck"
+version = "1.0.0"
+author = "Soulmanyes"
+license = "CC0-1.0"
+icon = "mouse"
+description = "Battery level of an ATK/VXE wireless mouse in the bar, read through DPIdeck."
+deprecated = false
+plugin_api = 28
+tags = ["hardware", "system"]

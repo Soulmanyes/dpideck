@@ -1,0 +1,9 @@
+{
+  "ui": {
+    "level": "Mouse battery: {level}%",
+    "charging": "charging",
+    "asleep": "Mouse is asleep",
+    "asleep-last": "asleep, last reading",
+    "no-mouse": "No mouse found"
+  }
+}

@@ -1,0 +1,14 @@
+id = "soulmanyes/dpideck"
+name = "DPIdeck"
+version = "1.0.0"
+plugin_api = 28
+author = "Soulmanyes"
+license = "CC0-1.0"
+icon = "mouse"
+description = "Battery level of an ATK/VXE wireless mouse in the bar, read through DPIdeck."
+tags = ["hardware", "system"]
+dependencies = ["python3"]
+
+[[widget]]
+id = "bar"
+entry = "dpideck.luau"
