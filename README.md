@@ -8,7 +8,7 @@ Linux, and its website needs a Chromium-based browser. DPIdeck needs neither, so
 works no matter which browser you use. It works over the 2.4 GHz dongle and over the
 USB cable.
 
-![DPIdeck showing a VXE MAD R's DPI and sensor settings](docs/screenshot.png)
+![DPIdeck showing all settings for a VXE MAD R: DPI, sensor, clicks and power, lighting and buttons](docs/screenshot.png)
 
 What it can change:
 
@@ -85,6 +85,8 @@ at 20% and below, and sends a notification when the battery drops below 15% and
 when the mouse is fully charged. It never wakes a sleeping mouse: it keeps showing
 the last level, dimmed. After installing, put the widget on your bar in Noctalia's
 bar settings.
+
+![The DPIdeck bar widget showing the mouse at 40% battery](docs/bar-widget.png)
 
 Without Noctalia this step is skipped and nothing else changes. If you install
 Noctalia later, run the install command again. The widget's files are in `noctalia/`.
