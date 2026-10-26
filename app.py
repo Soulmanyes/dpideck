@@ -17,8 +17,11 @@ from gi.repository import Adw, Gdk, Gio, GLib, Gtk  # noqa: E402
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import atk  # noqa: E402
+import updater
 
 APP_ID = "local.dpideck.DPIdeck"
+VERSION = "2.2"   # bump together with the release tag (v2.2)
+REPO = "Soulmanyes/dpideck"
 CONFIG_DIR = atk.CONFIG_DIR
 
 # Fixed lift-off steps; the codes are not in ascending order
@@ -173,10 +176,13 @@ class Window(Adw.ApplicationWindow):
         self.banner = Adw.Banner(button_label="Retry")
         self.banner.connect("button-clicked", lambda *_: self.connect_mouse())
         view.add_top_bar(self.banner)
+        self.update_banner = Adw.Banner(button_label="Update")
+        self.update_banner.connect("button-clicked", lambda *_: self.install_update())
+        view.add_top_bar(self.update_banner)
 
         self.page = Adw.PreferencesPage()
-        self.page.set_sensitive(False)
         self._build_page()
+        self.set_mouse_sensitive(False)
         self.toasts.set_child(self.page)
         view.set_content(self.toasts)
         self.set_content(view)
@@ -191,6 +197,7 @@ class Window(Adw.ApplicationWindow):
 
         self.connect_mouse()
         GLib.timeout_add_seconds(3, self._poll)
+        self.check_update()
 
     def _scroll_page(self, _ctrl, _dx, dy):
         w = self.page.get_first_child()
@@ -312,6 +319,13 @@ class Window(Adw.ApplicationWindow):
             btns.add(c.row)
             self.buttons.append(c)
         self.page.add(btns)
+        # the update group stays usable without a mouse, so only these go grey
+        self.mouse_groups = [dpi, perf, misc, light, rx, btns]
+        self.add_update_group()
+
+    def set_mouse_sensitive(self, on):
+        for g in self.mouse_groups:
+            g.set_sensitive(on)
 
     # ---- connection -----------------------------------------------------
     def _poll(self):
@@ -364,13 +378,13 @@ class Window(Adw.ApplicationWindow):
             self.banner.set_title(str(e))
         self.banner.set_revealed(True)
         if self.mouse is None:
-            self.page.set_sensitive(False)
+            self.set_mouse_sensitive(False)
             self.title.set_subtitle("Not connected")
 
     def show_state(self, s):
         self.state = s
         self.banner.set_revealed(False)
-        self.page.set_sensitive(True)
+        self.set_mouse_sensitive(True)
         link = "wireless" if self.mouse.receiver else "cable"
         bat = s.get("battery")
         sub = f"{link}"
@@ -640,6 +654,116 @@ class Window(Adw.ApplicationWindow):
                                    lambda _: self.reload(), self.show_error)
         dlg.connect("response", chosen)
         dlg.present(self)
+
+    # ---- updates --------------------------------------------------------
+    def add_update_group(self):
+        self.updates = updater.Updater(REPO, VERSION, os.path.dirname(
+            os.path.realpath(__file__)), os.path.join(CONFIG_DIR, "updates.json"))
+        self.latest = None       # a newer release, once the check finds one
+        self.installing = False
+        self.installed = False   # installed, by this window or an earlier one; a restart starts it
+        group = Adw.PreferencesGroup(title="Updates")
+        self.auto_update_row = Adw.SwitchRow(
+            title="Install updates automatically",
+            subtitle="Off: the app tells you about a new version and waits for you to "
+                     "press Update. Checks GitHub once a day")
+        self.auto_update_row.set_active(self.updates.auto)
+        self.auto_update_row.connect("notify::active", self.toggle_auto_update)
+        group.add(self.auto_update_row)
+        self.update_row = Adw.ActionRow(title=f"Version {VERSION}")
+        self.check_btn = Gtk.Button(label="Check now", valign=Gtk.Align.CENTER)
+        self.check_btn.connect("clicked", lambda *_: self.check_update(force=True))
+        self.update_row.add_suffix(self.check_btn)
+        self.restart_btn = Gtk.Button(label="Restart", valign=Gtk.Align.CENTER, visible=False)
+        self.restart_btn.add_css_class("suggested-action")
+        self.restart_btn.connect("clicked", lambda *_: self.restart())
+        self.update_row.add_suffix(self.restart_btn)
+        group.add(self.update_row)
+        self.page.add(group)
+
+    def toggle_auto_update(self, row, _):
+        self.updates.auto = row.get_active()
+        if self.updates.auto and self.latest and not self.updates.failed(self.latest):
+            self.install_update()
+
+    def show_installed(self, tag):
+        self.installed = True
+        self.update_banner.set_revealed(False)
+        self.update_row.set_subtitle(f"{tag} installed. Restart to use it")
+        self.check_btn.set_visible(False)
+        self.restart_btn.set_visible(True)
+
+    def check_update(self, force=False):
+        if self.installing or self.installed:
+            return
+        self.update_row.set_subtitle("Checking…")
+
+        def work():
+            try:
+                latest, error = self.updates.check(force), None
+            except (OSError, ValueError, KeyError) as e:  # offline, GitHub down, odd reply
+                latest, error = None, e
+            GLib.idle_add(found, latest, error)
+
+        def found(latest, error):
+            self.latest = latest
+            if error:
+                # only a check you asked for complains; the daily one stays quiet offline
+                self.update_row.set_subtitle("Couldn't reach GitHub" if force else "")
+            elif not latest:
+                self.update_row.set_subtitle("Up to date")
+            elif self.updates.installed(latest):
+                self.show_installed(latest["tag"])
+            else:
+                self.update_row.set_subtitle(f"{latest['tag']} is available")
+                if self.updates.auto and not self.updates.dev_checkout \
+                        and not self.updates.failed(latest):
+                    self.install_update()
+                else:
+                    self.update_banner.set_title(f"DPIdeck {latest['tag']} is available")
+                    self.update_banner.set_revealed(True)
+            return False
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def install_update(self):
+        if self.installing or self.installed or not self.latest:
+            return
+        if self.updates.dev_checkout:
+            self.toasts.add_toast(Adw.Toast(
+                title="Running from a git checkout: update it with git pull", timeout=5))
+            return
+        latest = self.latest
+        self.installing = True
+        self.update_banner.set_revealed(False)
+        self.update_row.set_subtitle(f"Installing {latest['tag']}…")
+
+        def work():
+            try:
+                self.updates.install(latest)
+                error = None
+            except (OSError, RuntimeError) as e:  # network, disk, installer: shown to the user
+                error = str(e)
+            GLib.idle_add(finished, error)
+
+        def finished(error):
+            self.installing = False
+            if error:
+                self.update_row.set_subtitle(f"Couldn't update: {error}")
+                self.toasts.add_toast(Adw.Toast(title=f"Couldn't update: {error}", timeout=6))
+                return False
+            self.show_installed(latest["tag"])
+            toast = Adw.Toast(title=f"Updated to {latest['tag']}. Restart to use it",
+                              button_label="Restart", timeout=0)
+            toast.connect("button-clicked", lambda *_: self.restart())
+            self.toasts.add_toast(toast)
+            return False
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def restart(self):
+        app = os.path.realpath(__file__)
+        os.execv(sys.executable, [sys.executable, app])
 
 
 class App(Adw.Application):

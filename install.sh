@@ -26,7 +26,11 @@ if [ ! -f "$SRC/70-dpideck.rules" ]; then
     tmp=$(mktemp -d)
     trap 'rm -rf "$tmp"' EXIT
     say "Downloading DPIdeck"
-    curl -fsSL https://github.com/Soulmanyes/dpideck/archive/refs/heads/main.tar.gz |
+    # the latest release; main if there is none yet. releases/latest redirects to .../tag/<tag>
+    tag=$(curl -fsSLo /dev/null -w '%{url_effective}' \
+        https://github.com/Soulmanyes/dpideck/releases/latest | sed -n 's|.*/tag/||p')
+    ref=${tag:+tags/$tag}
+    curl -fsSL "https://github.com/Soulmanyes/dpideck/archive/refs/${ref:-heads/main}.tar.gz" |
         tar -xz -C "$tmp" --strip-components=1
     sh "$tmp/install.sh" "$@" < /dev/tty
     exit
@@ -80,11 +84,15 @@ if ! have_deps; then
     fi
 fi
 
-say "Allowing your user to access ATK/VXE mice (udev rule)"
-sudo install -m 644 "$SRC/70-dpideck.rules" "$RULE"
-sudo rm -f "$OLD_RULE"
-sudo udevadm control --reload
-sudo udevadm trigger --subsystem-match=hidraw
+# skipped when the rule is already there, so the app's own updater (no terminal,
+# so no password prompt) can run this script
+if ! cmp -s "$SRC/70-dpideck.rules" "$RULE"; then
+    say "Allowing your user to access ATK/VXE mice (udev rule)"
+    sudo install -m 644 "$SRC/70-dpideck.rules" "$RULE"
+    sudo rm -f "$OLD_RULE"
+    sudo udevadm control --reload
+    sudo udevadm trigger --subsystem-match=hidraw
+fi
 
 # remove an install from before the rename (it was called vxe-atk)
 OLD=${XDG_DATA_HOME:-$HOME/.local/share}/vxe-atk
@@ -94,6 +102,7 @@ say "Installing the app to $DEST"
 mkdir -p "$DEST" "$APPS" "$BIN"
 install -m 644 "$SRC/atk.py" "$DEST/"
 install -m 755 "$SRC/app.py" "$DEST/"
+install -m 644 "$SRC/updater.py" "$DEST/"
 rm -f "$DEST/devices.json"    # older versions shipped this; it is now downloaded
 ln -sf "$DEST/app.py" "$BIN/$NAME"
 

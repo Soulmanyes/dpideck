@@ -27,5 +27,7 @@ for thousands of inputs. After changing `atk.py`, run
 | Device list downloaded from ATK HUB, 30-day cache | ✓ | ✓ |
 | Skip mice in firmware-recovery mode | ✓ | ✓ |
 | Prefer cable over receiver; reconnect on plug/unplug | ✓ | ✓ |
+| Update check (daily, banner + Update, opt-in auto install, same `updates.json` keys) | `updater.py` runs the release's install.sh | `windows/update` swaps in the zip's exe |
+| Version | `VERSION` in `app.py` | the same, passed in by `build.sh` |
 | Polling-rate cap | link type the mouse reports; else none | same |
 | Install | `install.sh` (udev rule, deps) | none: single exe |

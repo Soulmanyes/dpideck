@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -17,7 +19,14 @@ import (
 	"github.com/lxn/win"
 
 	"dpideck/core"
+	"dpideck/update"
 )
+
+// version comes from app.py's VERSION via build.sh (-X main.version=...); a build
+// without it is a development build that only reports updates.
+var version = "dev"
+
+const repo = "Soulmanyes/dpideck"
 
 type opt struct{ key, label string }
 
@@ -159,6 +168,17 @@ type app struct {
 	rxColor       string
 	rxRows        map[string]*walk.Composite
 	customColors  [16]win.COLORREF // the colour dialog's custom swatches, kept between uses
+
+	upd        *update.Updater
+	latest     *update.Release // a newer release, once the check finds one
+	installing bool
+	installed  bool // installed, by this window or an earlier one; a restart starts it
+	updBanner  *walk.Composite
+	updLabel   *walk.Label
+	autoUpdate *walk.CheckBox
+	updStatus  *walk.Label
+	checkBtn   *walk.PushButton
+	restartBtn *walk.PushButton
 
 	mouse      core.Mouse
 	transport  *hidTransport
@@ -712,6 +732,11 @@ func (a *app) buildUI() error {
 				PushButton{Text: "Reload", OnClicked: func() { a.reload() }},
 			}},
 			Label{AssignTo: &a.banner, Visible: false, TextColor: walk.RGB(0xC0, 0x1C, 0x28)},
+			Composite{AssignTo: &a.updBanner, Visible: false, Layout: HBox{MarginsZero: true}, Children: []Widget{
+				Label{AssignTo: &a.updLabel, Font: Font{Bold: true}},
+				HSpacer{},
+				PushButton{Text: "Update", OnClicked: func() { a.installUpdate() }},
+			}},
 			ScrollView{AssignTo: &a.scroll, HorizontalFixed: true, Layout: VBox{}, Children: []Widget{
 				Composite{AssignTo: &a.page, Layout: VBox{MarginsZero: true}, Enabled: false, Children: []Widget{
 					GroupBox{Title: "Sensitivity (DPI)", Layout: VBox{}, Children: append([]Widget{
@@ -763,6 +788,19 @@ func (a *app) buildUI() error {
 					}},
 					GroupBox{Title: "Buttons", Layout: VBox{}, Children: buttonWidgets},
 					VSpacer{},
+				}},
+				// outside the page, so it works without a mouse
+				GroupBox{Title: "Updates", Layout: VBox{}, Children: []Widget{
+					CheckBox{AssignTo: &a.autoUpdate, Alignment: AlignHNearVCenter,
+						Text: "Install updates automatically", OnClicked: a.toggleAutoUpdate},
+					Label{Text: "Off: the app tells you about a new version and waits for you to press Update. Checks GitHub once a day."},
+					Composite{Layout: HBox{MarginsZero: true}, Children: []Widget{
+						Label{Text: "Version " + version, MinSize: Size{Width: 170}},
+						Label{AssignTo: &a.updStatus},
+						HSpacer{},
+						PushButton{AssignTo: &a.checkBtn, Text: "Check now", OnClicked: func() { a.checkUpdate(true) }},
+						PushButton{AssignTo: &a.restartBtn, Text: "Restart", Visible: false, OnClicked: a.restart},
+					}},
 				}},
 			}},
 		},
@@ -919,6 +957,7 @@ func main() {
 	}
 	a.connect()
 	go a.poll()
+	a.initUpdates()
 	if len(os.Args) == 3 && os.Args[1] == "-wheeltest" {
 		go a.wheelTest(os.Args[2])
 	}
@@ -954,4 +993,105 @@ func (a *app) wheelTest(path string) {
 		os.WriteFile(path, []byte(strings.Join(report, "\n")+"\n"), 0o644)
 		a.mw.Close()
 	})
+}
+
+// ---- updates: the same flow as app.py's, with update/ doing the work
+
+func (a *app) initUpdates() {
+	exe, err := os.Executable()
+	if err != nil {
+		exe = os.Args[0]
+	}
+	a.upd = update.New(repo, version, exe, filepath.Join(core.ConfigDir(), "updates.json"))
+	a.upd.CleanOld()
+	a.autoUpdate.SetChecked(a.upd.Auto())
+	if !a.demo {
+		a.checkUpdate(false)
+	}
+}
+
+func (a *app) toggleAutoUpdate() {
+	a.upd.SetAuto(a.autoUpdate.Checked())
+	if a.upd.Auto() && a.latest != nil && !a.upd.Failed(a.latest) {
+		a.installUpdate()
+	}
+}
+
+func (a *app) showInstalled(tag string) {
+	a.installed = true
+	a.updBanner.SetVisible(false)
+	a.updStatus.SetText(tag + " installed. Restart to use it")
+	a.checkBtn.SetVisible(false)
+	a.restartBtn.SetVisible(true)
+}
+
+// Network work runs on its own goroutine, not a.run's queue, so a slow download
+// never holds up the mouse.
+func (a *app) checkUpdate(force bool) {
+	if a.installing || a.installed {
+		return
+	}
+	a.updStatus.SetText("Checking…")
+	go func() {
+		latest, err := a.upd.Check(force)
+		a.mw.Synchronize(func() {
+			a.latest = latest
+			switch {
+			case err != nil:
+				// only a check you asked for complains; the daily one stays quiet offline
+				if force {
+					a.updStatus.SetText("Couldn't reach GitHub")
+				} else {
+					a.updStatus.SetText("")
+				}
+			case latest == nil:
+				a.updStatus.SetText("Up to date")
+			case a.upd.Installed(latest):
+				a.showInstalled(latest.Tag)
+			default:
+				a.updStatus.SetText(latest.Tag + " is available")
+				if a.upd.Auto() && !a.upd.DevBuild() && !a.upd.Failed(latest) {
+					a.installUpdate()
+				} else {
+					a.updLabel.SetText("DPIdeck " + latest.Tag + " is available")
+					a.updBanner.SetVisible(true)
+				}
+			}
+		})
+	}()
+}
+
+func (a *app) installUpdate() {
+	if a.installing || a.installed || a.latest == nil {
+		return
+	}
+	if a.upd.DevBuild() {
+		a.toast("Development build: build the new version yourself")
+		return
+	}
+	latest := a.latest
+	a.installing = true
+	a.updBanner.SetVisible(false)
+	a.updStatus.SetText("Installing " + latest.Tag + "…")
+	go func() {
+		err := a.upd.Install(latest)
+		a.mw.Synchronize(func() {
+			a.installing = false
+			if err != nil {
+				a.updStatus.SetText("Couldn't update: " + err.Error())
+				a.toast("Couldn't update: " + err.Error())
+				return
+			}
+			a.showInstalled(latest.Tag)
+			a.toast("Updated to " + latest.Tag + ". Restart to use it")
+		})
+	}()
+}
+
+func (a *app) restart() {
+	if err := exec.Command(a.upd.Exe).Start(); err != nil {
+		a.toast("Couldn't restart: " + err.Error())
+		return
+	}
+	a.mw.Close()
 }

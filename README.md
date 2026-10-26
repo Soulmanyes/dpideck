@@ -63,8 +63,8 @@ The script asks for your password once. It uses it to:
 
 The script installs the app for your user only. Afterwards, open **DPIdeck**
 from your app menu, or run `dpideck` in a terminal. If the mouse is not found,
-unplug the mouse or its dongle and plug it back in. To update, run the same
-command again.
+unplug the mouse or its dongle and plug it back in. The app updates itself (see
+[Updates](#updates)); running the same command again also updates it.
 
 To remove it:
 
@@ -164,6 +164,22 @@ If you try another mouse:
 2. Change one setting in the app, such as the polling rate, and change it back.
 3. Report what does and doesn't work as a GitHub issue, with the output of step 1.
 
+## Updates
+
+From version 2.2 on, both versions check GitHub once a day for a newer release.
+When there is one, a banner shows "DPIdeck vX is available" with an **Update**
+button. Turn on **Install updates automatically** in the Updates section at the
+bottom to install them without asking. A restart starts the new version.
+
+- Linux: the update downloads the release and runs its `install.sh`. It skips the
+  password prompt when the udev rule is already in place; if a release ever
+  needs your password, it says so, and you run the install command yourself.
+- Windows: the update swaps in the new `DPIdeck.exe` from the release zip. It
+  can't do that in a folder you can't write to, such as Program Files.
+- Running from a git clone, the Linux app only tells you about updates; use
+  `git pull`.
+- Version 2.1 and older have no update check: install 2.2 once by hand.
+
 ## Privacy
 
 The app talks to ATK's servers for two things, and sends no information about you
@@ -182,6 +198,9 @@ Without a connection the app uses its cached copies. If it has never been able
 to download the list, it can't tell which sensor a mouse has: DPI is then greyed
 out on COMPX mice and Competitive Max is hidden, but every other setting works.
 `python3 atk.py --update-devices` downloads the list again.
+
+The update check asks `api.github.com` for the latest DPIdeck release, at most
+once a day, and downloads it from `github.com` when you update.
 
 ## How it works
 

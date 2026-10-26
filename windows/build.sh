@@ -3,9 +3,12 @@
 # Runs the parity tests first; they must pass.
 set -eu
 cd "$(dirname "$0")"
-go test ./core/
+# one version for both apps: app.py's VERSION. The updater compares it with the release tag
+VERSION=$(sed -n 's/^VERSION = "\([0-9.]*\)".*/\1/p' ../app.py)
+[ -n "$VERSION" ] || { echo "No VERSION in ../app.py" >&2; exit 1; }
+go test ./core/ ./update/
 go run github.com/tc-hib/go-winres@v0.3.3 make --arch amd64
-GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -H windowsgui" -o DPIdeck.exe .
+GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -H windowsgui -X main.version=$VERSION" -o DPIdeck.exe .
 rm -f DPIdeck-windows.zip
 python3 - <<'PY'
 import zipfile
