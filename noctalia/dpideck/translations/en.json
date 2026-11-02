@@ -4,6 +4,29 @@
     "charging": "charging",
     "asleep": "Mouse is asleep",
     "asleep-last": "asleep, last reading",
-    "no-mouse": "No mouse found"
+    "no-mouse": "No mouse found",
+    "click": "Click for mouse settings"
+  },
+  "panel": {
+    "title": "DPIdeck",
+    "not-connected": "Not connected",
+    "wireless": "wireless",
+    "cable": "cable",
+    "reload": "Reload from mouse",
+    "open-app": "Open DPIdeck (buttons, colours, backup)",
+    "reading": "Reading the mouse…",
+    "saving": "Saving…",
+    "not-saved": "Not saved",
+    "failed": "DPIdeck didn't answer.",
+    "timeout": "The mouse didn't answer in time.",
+    "asleep": "Mouse is asleep. Move it, then press reload.",
+    "dpi": "Sensitivity (DPI)",
+    "dpi-unknown": "This mouse stores DPI in a format DPIdeck can't read yet.",
+    "dpi-hint": "Type a value from {min} to {max} and press Enter. Click a stage to make it active.",
+    "dpi-number": "DPI must be a number.",
+    "stage": "Stage {n}",
+    "stage-active": "Active stage",
+    "stage-activate": "Make this the active stage",
+    "stage-count": "Number of stages"
   }
 }

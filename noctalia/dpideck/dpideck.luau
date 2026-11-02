@@ -3,7 +3,8 @@
 --
 -- battery.py does the HID read with DPIdeck's atk.py and prints JSON. It
 -- never wakes the mouse, so a sleeping mouse reports {"asleep": true}; the
--- widget then keeps the last level and dims the glyph.
+-- widget then keeps the last level and dims the glyph. Clicking it opens the
+-- settings panel (panel.luau).
 
 local LOW = 20
 local POLL_MS = 60000
@@ -19,14 +20,14 @@ local function render()
     barWidget.setGlyph("mouse-off")
     barWidget.setGlyphColor("on_surface_variant")
     barWidget.setText("")
-    barWidget.setTooltip(errorText)
+    barWidget.setTooltip(errorText .. "\n" .. noctalia.tr("ui.click"))
     return
   end
   if level == nil then
     barWidget.setGlyph("mouse")
     barWidget.setGlyphColor("on_surface_variant")
     barWidget.setText("")
-    barWidget.setTooltip(noctalia.tr("ui.asleep"))
+    barWidget.setTooltip(noctalia.tr("ui.asleep") .. "\n" .. noctalia.tr("ui.click"))
     return
   end
 
@@ -49,7 +50,7 @@ local function render()
   if asleep then
     tip = tip .. " · " .. noctalia.tr("ui.asleep-last")
   end
-  barWidget.setTooltip(tip)
+  barWidget.setTooltip(tip .. "\n" .. noctalia.tr("ui.click"))
 end
 
 local function poll()
@@ -87,4 +88,8 @@ function update()
   noctalia.setUpdateInterval(POLL_MS)
   render()
   poll()
+end
+
+function onClick()
+  noctalia.togglePanel("soulmanyes/dpideck:panel")
 end

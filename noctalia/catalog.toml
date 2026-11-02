@@ -3,11 +3,11 @@
 [[plugin]]
 id = "soulmanyes/dpideck"
 name = "DPIdeck"
-version = "1.0.0"
+version = "1.1.0"
 author = "Soulmanyes"
 license = "CC0-1.0"
 icon = "mouse"
-description = "Battery level of an ATK/VXE wireless mouse in the bar, read through DPIdeck."
+description = "Battery level of an ATK/VXE wireless mouse in the bar; click it to change the mouse's settings, through DPIdeck."
 deprecated = false
-plugin_api = 28
-tags = ["hardware", "system"]
+plugin_api = 43
+tags = ["hardware", "system", "panel"]

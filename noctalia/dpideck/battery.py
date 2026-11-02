@@ -42,19 +42,28 @@ CHARGING_SEEN = os.path.join(RUNTIME, "noctalia-dpideck.charging")
 FULL_NOTIFIED = os.path.join(RUNTIME, "noctalia-dpideck.full-notified")
 
 
-def main():
+def load_atk():
+    """DPIdeck's atk module on the cached device list, or None if it isn't installed."""
     if not os.path.exists(os.path.join(DPIDECK, "atk.py")):
-        return {"error": "DPIdeck is not installed"}
+        return None
     sys.path.insert(0, DPIDECK)
     import atk
 
-    # Use the cached device list whatever its age: a poll must never start
+    # Use the cached device list whatever its age: the plugin must never start
     # the ATK HUB download. DPIdeck itself refreshes the cache.
-    try:
-        with open(atk.DEVICES_CACHE) as f:
-            atk._registry = json.load(f)["registry"]
-    except (OSError, ValueError, KeyError, TypeError):
-        atk._registry = atk.EMPTY_REGISTRY
+    if atk._registry is None:
+        try:
+            with open(atk.DEVICES_CACHE) as f:
+                atk._registry = json.load(f)["registry"]
+        except (OSError, ValueError, KeyError, TypeError):
+            atk._registry = atk.EMPTY_REGISTRY
+    return atk
+
+
+def main():
+    atk = load_atk()
+    if atk is None:
+        return {"error": "DPIdeck is not installed"}
 
     try:
         mouse = atk.open_mouse()
