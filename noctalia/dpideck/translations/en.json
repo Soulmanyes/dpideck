@@ -22,7 +22,7 @@
     "asleep": "Mouse is asleep. Move it, then press reload.",
     "dpi": "Sensitivity (DPI)",
     "dpi-unknown": "This mouse stores DPI in a format DPIdeck can't read yet.",
-    "dpi-hint": "Type a value from {min} to {max} and press Enter. Click a stage to make it active.",
+    "dpi-hint": "Drag a slider, or type a value from {min} to {max} and press Enter. Click a stage to make it active.",
     "dpi-number": "DPI must be a number.",
     "stage": "Stage {n}",
     "stage-active": "Active stage",

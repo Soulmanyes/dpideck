@@ -36,6 +36,8 @@ BRIGHTNESS = [(0, "Low"), (1, "Medium"), (2, "High")]
 SPEED = [(0, "Slow"), (1, "Medium"), (2, "Fast")]
 SLEEP = [(30, "30 s"), (60, "1 min"), (120, "2 min"), (180, "3 min"),
          (300, "5 min"), (1200, "20 min"), (1500, "25 min"), (1800, "30 min")]
+# The polling rates the panel's quick slider steps through, where the mouse offers them
+QUICK_RATES = (1000, 2000, 4000, 8000)
 SWITCHES = [("motion_sync", "Motion sync", "Smoother tracking, about 1 ms more latency",
              "set_motion_sync"),
             ("angle_snap", "Angle snapping", "Straightens lines you draw", "set_angle_snap"),
@@ -78,11 +80,25 @@ def offered(s):
 
 
 def describe(s, mouse):
-    """The settings as the panel draws them: a DPI block plus sections of rows."""
+    """The settings as the panel draws them: a DPI block plus sections of rows.
+
+    The first section holds the quick controls: a polling-rate slider over
+    1K-8K and the switches.
+    """
     caps = s["caps"]
     allowed = offered(s)
+    rates = [hz for hz in QUICK_RATES if hz in caps["rates"]]
+    if s["rate_hz"] is not None and s["rate_hz"] not in rates:   # e.g. 500 Hz: still show it
+        rates = sorted(rates + [s["rate_hz"]])
+    quick = [{"type": "steps", "key": "rate", "title": "Polling rate", "value": s["rate_hz"],
+              "enabled": True,
+              "options": [{"value": hz, "label": f"{hz // 1000}K" if hz >= 1000 else str(hz)}
+                          for hz in rates]}]
+    for key, title, sub, _f in SWITCHES:
+        if key in allowed:
+            quick.append({"type": "toggle", "key": key, "title": title, "subtitle": sub,
+                          "value": bool(s[key]), "enabled": True})
     sensor = [
-        choice("rate", "Polling rate", s["rate_hz"], [(hz, f"{hz} Hz") for hz in caps["rates"]]),
         choice("sensor_mode", "Sensor mode", s["sensor_mode"], caps["sensor_modes"],
                subtitle="Competitive modes use more battery"),
     ]
@@ -90,16 +106,13 @@ def describe(s, mouse):
         sensor.append(choice("lod", "Lift-off distance", s["lod_code"], LOD_LEVELS[caps["lod"]]))
     elif caps["lod"] == "continuous":
         sensor.append(choice("lod", "Lift-off distance", s["lod_code"], LOD_CONTINUOUS))
-    for key, title, sub, _f in SWITCHES:
-        if key in allowed:
-            sensor.append({"type": "toggle", "key": key, "title": title, "subtitle": sub,
-                           "value": bool(s[key]), "enabled": True})
     power = [
         choice("debounce", "Click debounce", s["debounce_ms"],
                DEBOUNCE if caps["debounce_off"] else DEBOUNCE[1:]),
         choice("sleep", "Sleep after", s["sleep_s"], SLEEP),
     ]
-    sections = [{"title": "Sensor", "items": sensor},
+    sections = [{"title": "Quick settings", "items": quick},
+                {"title": "Sensor", "items": sensor},
                 {"title": "Clicks and power", "items": power}]
     light = s.get("light")
     if light is not None:
@@ -122,6 +135,7 @@ def describe(s, mouse):
             "active": s["active_stage"],
             "min": caps["min_dpi"],
             "max": caps["max_dpi"],
+            "step": caps["dpi_step"],
         },
         "sections": sections,
     }

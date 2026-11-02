@@ -16,6 +16,7 @@ local data = nil -- last settings from control.py
 local busy = false
 local queue = {} -- pending { key, value } writes, oldest first
 local status = nil -- { text, color }
+local drafts = {} -- slider positions while dragging, by slider key
 local closeButton = true
 local radiusScale = 1.0
 
@@ -204,6 +205,76 @@ local function toggleRow(item)
   })
 end
 
+-- A slider over a few fixed values (the polling rates), with their labels below.
+local function stepsRow(item)
+  local current = 0
+  for i, option in ipairs(item.options) do
+    if option.value == item.value then
+      current = i - 1
+    end
+  end
+  local key = "steps-" .. item.key
+  local shown = drafts[key] or current
+  local option = item.options[shown + 1]
+  local header = ui.row({ gap = 12, align = "center" }, {
+    textBlock(item.title, nil),
+    ui.label({ text = option and (tostring(option.value) .. " Hz") or "?", color = "primary" }),
+  })
+  if #item.options < 2 then
+    return ui.column({ key = "row-" .. item.key, gap = 4 }, { header })
+  end
+  local ticks = {}
+  for i, o in ipairs(item.options) do
+    table.insert(ticks, ui.label({
+      text = o.label,
+      fontSize = 11,
+      color = (i - 1 == shown) and "primary" or "on_surface_variant",
+    }))
+  end
+  return ui.column({ key = "row-" .. item.key, gap = 4 }, {
+    header,
+    ui.slider({
+      key = key,
+      min = 0,
+      max = #item.options - 1,
+      step = 1,
+      value = current,
+      controlSize = "sm",
+      enabled = item.enabled ~= false,
+      onChange = function(value)
+        drafts[key] = math.floor((tonumber(value) or current) + 0.5)
+        render()
+      end,
+      onDragEnd = function()
+        local pick = drafts[key]
+        drafts[key] = nil
+        local chosen = pick and item.options[pick + 1]
+        if chosen ~= nil and chosen.value ~= item.value then
+          setItem(item.key, chosen.value)
+          change(item.key, chosen.value)
+        end
+        render()
+      end,
+    }),
+    ui.row({ justify = "space_between", paddingH = 4 }, ticks),
+  })
+end
+
+-- DPI sliders run on a log scale: on a straight 50-36000 track every usual
+-- setting (400-3200) would sit in the first tenth. Positions are 0..DPI_TRACK.
+local DPI_TRACK = 1000
+
+local function dpiToPos(dpi, lo, hi)
+  local v = math.clamp(dpi, lo, hi)
+  return math.floor(DPI_TRACK * math.log(v / lo) / math.log(hi / lo) + 0.5)
+end
+
+local function posToDpi(pos, lo, hi, step)
+  local raw = lo * (hi / lo) ^ (pos / DPI_TRACK)
+  local grid = math.max(step or 50, 50) -- round numbers; type a value for finer steps
+  return math.clamp(math.floor(raw / grid + 0.5) * grid, lo, hi)
+end
+
 local function heading(text)
   return ui.label({ text = text, fontWeight = "bold", color = "primary" })
 end
@@ -226,7 +297,9 @@ local function dpiSection()
   end
 
   for i = 1, math.min(dpi.count, #dpi.stages) do
-    local value = dpi.stages[i]
+    local stored = dpi.stages[i]
+    local sliderKey = "dpi-slider-" .. i
+    local value = drafts[sliderKey] or stored
     local index = i - 1
     local active = index == dpi.active
     table.insert(rows, ui.row({ key = "stage-" .. i, gap = 8, align = "center" }, {
@@ -245,12 +318,37 @@ local function dpiSection()
           end
         end,
       }),
+      ui.slider({
+        key = sliderKey,
+        min = 0,
+        max = DPI_TRACK,
+        step = 1,
+        value = dpiToPos(stored, dpi.min, dpi.max),
+        controlSize = "sm",
+        flexGrow = 1,
+        onChange = function(v)
+          local pos = tonumber(v)
+          if pos ~= nil then
+            drafts[sliderKey] = posToDpi(pos, dpi.min, dpi.max, dpi.step)
+            render()
+          end
+        end,
+        onDragEnd = function()
+          local n = drafts[sliderKey]
+          drafts[sliderKey] = nil
+          if n ~= nil and n ~= stored then
+            dpi.stages[i] = n -- the mouse's answer replaces it, rounded as stored
+            change("stage_dpi", { index, n })
+          end
+          render()
+        end,
+      }),
       ui.input({
-        -- the value is in the key: a new reading from the mouse reseeds the field
+        -- the value is in the key: a new reading (or a slider move) reseeds the field
         key = "dpi-" .. i .. "-" .. tostring(value),
         value = tostring(value),
         controlSize = "sm",
-        flexGrow = 1,
+        width = 76,
         placeholder = tostring(dpi.min) .. "–" .. tostring(dpi.max),
         onSubmit = function(text)
           local n = tonumber(noctalia.string.trim(text))
@@ -260,13 +358,14 @@ local function dpiSection()
             return
           end
           n = math.floor(n + 0.5)
-          if n == value then
+          if n == stored then
             return
           end
+          dpi.stages[i] = n
           change("stage_dpi", { index, n })
+          render()
         end,
       }),
-      ui.label({ text = "DPI", color = "on_surface_variant" }),
     }))
   end
   table.insert(rows, ui.label({
@@ -316,7 +415,13 @@ local function body()
   for _, section in ipairs(data.sections or {}) do
     local rows = {}
     for _, item in ipairs(section.items or {}) do
-      table.insert(rows, item.type == "toggle" and toggleRow(item) or choiceRow(item))
+      if item.type == "toggle" then
+        table.insert(rows, toggleRow(item))
+      elseif item.type == "steps" then
+        table.insert(rows, stepsRow(item))
+      else
+        table.insert(rows, choiceRow(item))
+      end
     end
     table.insert(children, heading(section.title))
     table.insert(children, card(rows))
