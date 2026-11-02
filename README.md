@@ -89,15 +89,16 @@ bar settings.
 ![The DPIdeck bar widget showing the mouse at 40% battery](docs/bar-widget.png)
 
 Click the widget to change the mouse's settings without opening the app. Each DPI
-stage has a slider (or type an exact value), and quick settings hold a polling-rate
-slider (1K, 2K, 4K, 8K, as far as your receiver or cable allows) and the motion
-sync, angle snapping, ripple control and long range switches. The panel also covers
-the active stage, sensor mode, lift-off distance, click debounce, sleep time and
-the DPI light. It offers the same choices as the app for your mouse, and every
-change is read back from the mouse. Opening the panel wakes the mouse; if it is
-asleep, move it and press reload. Buttons, colours, the receiver light, polling
-rates below 1000 Hz and backups stay in the app, which the panel's open button
-starts. The panel needs Noctalia 5.4.1 or newer.
+stage has a slider (or type an exact value), and quick settings hold sliders for
+the polling rate (1K, 2K, 4K, 8K, as far as your receiver or cable allows) and the
+sensor mode, plus the motion sync, angle snapping, ripple control and long range
+switches. Lift-off distance, click debounce, sleep time and the DPI light can be
+added to the panel in Noctalia's Settings → Plugins (the gear next to DPIdeck).
+The panel offers the same choices as the app for your mouse, and every change is
+read back from the mouse. Opening the panel wakes the mouse; if it is asleep, move
+it and press reload. Buttons, colours, the receiver light, polling rates below
+1000 Hz and backups stay in the app, which the panel's open button starts. The
+panel needs Noctalia 5.4.1 or newer.
 
 Without Noctalia this step is skipped and nothing else changes. If you install
 Noctalia later, run the install command again. The widget's files are in `noctalia/`.

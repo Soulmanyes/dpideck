@@ -11,8 +11,10 @@ description = "Battery level of an ATK/VXE wireless mouse in the bar; click it t
 tags = ["hardware", "system", "panel"]
 dependencies = ["python3"]
 
-# Opened by clicking the bar widget: DPI stages, polling rate, sensor,
-# debounce, sleep and DPI light. Buttons and the receiver light stay in the app.
+# Opened by clicking the bar widget. DPI stages and quick settings (polling
+# rate, sensor mode, switches) always show; lift-off, debounce, sleep and the
+# DPI light are off by default and turned on below. Buttons and the receiver
+# light stay in the app.
 [[panel]]
 id = "panel"
 entry = "panel.luau"
@@ -20,6 +22,34 @@ width = 440
 height = 720
 placement = "attached"
 open_near_click = true
+
+  [[panel.setting]]
+  key = "show_lift_off"
+  type = "bool"
+  label_key = "settings.show_lift_off.label"
+  description_key = "settings.show_lift_off.description"
+  default = false
+
+  [[panel.setting]]
+  key = "show_debounce"
+  type = "bool"
+  label_key = "settings.show_debounce.label"
+  description_key = "settings.show_debounce.description"
+  default = false
+
+  [[panel.setting]]
+  key = "show_sleep"
+  type = "bool"
+  label_key = "settings.show_sleep.label"
+  description_key = "settings.show_sleep.description"
+  default = false
+
+  [[panel.setting]]
+  key = "show_lighting"
+  type = "bool"
+  label_key = "settings.show_lighting.label"
+  description_key = "settings.show_lighting.description"
+  default = false
 
 [[widget]]
 id = "bar"

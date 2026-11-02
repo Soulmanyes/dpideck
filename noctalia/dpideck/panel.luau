@@ -17,6 +17,23 @@ local busy = false
 local queue = {} -- pending { key, value } writes, oldest first
 local status = nil -- { text, color }
 local drafts = {} -- slider positions while dragging, by slider key
+
+-- Rows outside DPI and quick settings appear only when their panel setting
+-- (plugin.toml, Settings -> Plugins) is on. Read again on every open.
+local OPTIONAL = {
+  lod = "show_lift_off",
+  debounce = "show_debounce",
+  sleep = "show_sleep",
+  light_mode = "show_lighting",
+  light_brightness = "show_lighting",
+  light_speed = "show_lighting",
+}
+local shown = {} -- setting key -> bool
+
+local function wanted(item)
+  local setting = OPTIONAL[item.key]
+  return setting == nil or shown[setting] == true
+end
 local closeButton = true
 local radiusScale = 1.0
 
@@ -214,11 +231,11 @@ local function stepsRow(item)
     end
   end
   local key = "steps-" .. item.key
-  local shown = drafts[key] or current
-  local option = item.options[shown + 1]
+  local at = drafts[key] or current
+  local option = item.options[at + 1]
   local header = ui.row({ gap = 12, align = "center" }, {
-    textBlock(item.title, nil),
-    ui.label({ text = option and (tostring(option.value) .. " Hz") or "?", color = "primary" }),
+    textBlock(item.title, item.subtitle),
+    ui.label({ text = option and (option.name or option.label) or "?", color = "primary" }),
   })
   if #item.options < 2 then
     return ui.column({ key = "row-" .. item.key, gap = 4 }, { header })
@@ -228,7 +245,7 @@ local function stepsRow(item)
     table.insert(ticks, ui.label({
       text = o.label,
       fontSize = 11,
-      color = (i - 1 == shown) and "primary" or "on_surface_variant",
+      color = (i - 1 == at) and "primary" or "on_surface_variant",
     }))
   end
   return ui.column({ key = "row-" .. item.key, gap = 4 }, {
@@ -415,6 +432,9 @@ local function body()
   for _, section in ipairs(data.sections or {}) do
     local rows = {}
     for _, item in ipairs(section.items or {}) do
+      if not wanted(item) then
+        continue
+      end
       if item.type == "toggle" then
         table.insert(rows, toggleRow(item))
       elseif item.type == "steps" then
@@ -423,8 +443,10 @@ local function body()
         table.insert(rows, choiceRow(item))
       end
     end
-    table.insert(children, heading(section.title))
-    table.insert(children, card(rows))
+    if #rows > 0 then
+      table.insert(children, heading(section.title))
+      table.insert(children, card(rows))
+    end
   end
   return children
 end
@@ -499,6 +521,9 @@ end
 function onOpen(_context)
   closeButton = noctalia.getSetting("shell.show_close_buttons") ~= false
   radiusScale = noctalia.getSetting("shell.corner_radius_scale") or 1.0
+  for _, setting in pairs(OPTIONAL) do
+    shown[setting] = noctalia.getConfig(setting) == true
+  end
   render() -- the last reading, while a fresh one loads
   if #queue == 0 then
     run("state")

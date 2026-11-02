@@ -28,5 +28,23 @@
     "stage-active": "Active stage",
     "stage-activate": "Make this the active stage",
     "stage-count": "Number of stages"
+  },
+  "settings": {
+    "show_lift_off": {
+      "label": "Show lift-off distance",
+      "description": "Adds lift-off distance to the settings panel, on mice that have it."
+    },
+    "show_debounce": {
+      "label": "Show click debounce",
+      "description": "Adds click debounce to the settings panel."
+    },
+    "show_sleep": {
+      "label": "Show sleep timer",
+      "description": "Adds how long the mouse waits before sleeping to the settings panel."
+    },
+    "show_lighting": {
+      "label": "Show DPI light",
+      "description": "Adds the DPI light's mode, brightness and speed to the settings panel, on mice that have one."
+    }
   }
 }
