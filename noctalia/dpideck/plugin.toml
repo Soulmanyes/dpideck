@@ -1,13 +1,25 @@
 id = "soulmanyes/dpideck"
 name = "DPIdeck"
-version = "1.0.0"
-plugin_api = 28
+version = "1.1.0"
+# 43 for the surface_container colour role, 24 for argv runAsync (setting values reach control.py without a
+# shell), 9 for closure callbacks.
+plugin_api = 43
 author = "Soulmanyes"
 license = "CC0-1.0"
 icon = "mouse"
-description = "Battery level of an ATK/VXE wireless mouse in the bar, read through DPIdeck."
-tags = ["hardware", "system"]
+description = "Battery level of an ATK/VXE wireless mouse in the bar; click it to change the mouse's settings, through DPIdeck."
+tags = ["hardware", "system", "panel"]
 dependencies = ["python3"]
+
+# Opened by clicking the bar widget: DPI stages, polling rate, sensor,
+# debounce, sleep and DPI light. Buttons and the receiver light stay in the app.
+[[panel]]
+id = "panel"
+entry = "panel.luau"
+width = 440
+height = 720
+placement = "attached"
+open_near_click = true
 
 [[widget]]
 id = "bar"
