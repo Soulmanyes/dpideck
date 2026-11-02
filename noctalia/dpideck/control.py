@@ -36,10 +36,10 @@ BRIGHTNESS = [(0, "Low"), (1, "Medium"), (2, "High")]
 SPEED = [(0, "Slow"), (1, "Medium"), (2, "Fast")]
 SLEEP = [(30, "30 s"), (60, "1 min"), (120, "2 min"), (180, "3 min"),
          (300, "5 min"), (1200, "20 min"), (1500, "25 min"), (1800, "30 min")]
-# The polling rates the panel's quick slider steps through, where the mouse offers them
+# The polling rates the panel's quick buttons offer, where the mouse has them
 QUICK_RATES = (1000, 2000, 4000, 8000)
-# Short names under the sensor-mode slider
-MODE_TICKS = {"Competitive": "Comp.", "Competitive Max": "Max"}
+# Short names on the sensor-mode buttons
+MODE_TICKS = {"Competitive Max": "Comp. Max"}
 SWITCHES = [("motion_sync", "Motion sync", "Smoother tracking, about 1 ms more latency",
              "set_motion_sync"),
             ("angle_snap", "Angle snapping", "Straightens lines you draw", "set_angle_snap"),
@@ -85,7 +85,7 @@ def describe(s, mouse):
     """The settings as the panel draws them: a DPI block plus sections of rows.
 
     The first section holds the quick controls: polling-rate (1K-8K) and
-    sensor-mode sliders and the switches. The panel hides the other sections'
+    sensor-mode buttons and the switches. The panel hides the other sections'
     rows unless they are turned on in its settings.
     """
     caps = s["caps"]

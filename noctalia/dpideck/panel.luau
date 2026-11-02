@@ -222,58 +222,33 @@ local function toggleRow(item)
   })
 end
 
--- A slider over a few fixed values (the polling rates), with their labels below.
+-- A row of buttons over a few fixed values (polling rate, sensor mode); the
+-- current one is filled, and the tooltip has the full name.
 local function stepsRow(item)
-  local current = 0
-  for i, option in ipairs(item.options) do
-    if option.value == item.value then
-      current = i - 1
-    end
-  end
-  local key = "steps-" .. item.key
-  local at = drafts[key] or current
-  local option = item.options[at + 1]
-  local header = ui.row({ gap = 12, align = "center" }, {
-    textBlock(item.title, item.subtitle),
-    ui.label({ text = option and (option.name or option.label) or "?", color = "primary" }),
-  })
-  if #item.options < 2 then
-    return ui.column({ key = "row-" .. item.key, gap = 4 }, { header })
-  end
-  local ticks = {}
+  local buttons = {}
   for i, o in ipairs(item.options) do
-    table.insert(ticks, ui.label({
+    local selected = o.value == item.value
+    table.insert(buttons, ui.button({
+      -- selection is in the key so the button is rebuilt with its new look
+      key = "steps-" .. item.key .. "-" .. i .. (selected and "-on" or ""),
       text = o.label,
-      fontSize = 11,
-      color = (i - 1 == at) and "primary" or "on_surface_variant",
+      tooltip = o.name,
+      variant = selected and "primary" or "outline",
+      controlSize = "sm",
+      flexGrow = 1,
+      enabled = item.enabled ~= false,
+      onClick = function()
+        if o.value ~= item.value then
+          setItem(item.key, o.value)
+          change(item.key, o.value)
+          render()
+        end
+      end,
     }))
   end
-  return ui.column({ key = "row-" .. item.key, gap = 4 }, {
-    header,
-    ui.slider({
-      key = key,
-      min = 0,
-      max = #item.options - 1,
-      step = 1,
-      value = current,
-      controlSize = "sm",
-      enabled = item.enabled ~= false,
-      onChange = function(value)
-        drafts[key] = math.floor((tonumber(value) or current) + 0.5)
-        render()
-      end,
-      onDragEnd = function()
-        local pick = drafts[key]
-        drafts[key] = nil
-        local chosen = pick and item.options[pick + 1]
-        if chosen ~= nil and chosen.value ~= item.value then
-          setItem(item.key, chosen.value)
-          change(item.key, chosen.value)
-        end
-        render()
-      end,
-    }),
-    ui.row({ justify = "space_between", paddingH = 4 }, ticks),
+  return ui.column({ key = "row-" .. item.key, gap = 8 }, {
+    textBlock(item.title, item.subtitle),
+    ui.row({ gap = 6 }, buttons),
   })
 end
 
