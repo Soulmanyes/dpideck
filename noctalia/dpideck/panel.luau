@@ -288,19 +288,53 @@ local function stepsRow(item)
   })
 end
 
--- DPI sliders run on a log scale: on a straight 50-36000 track every usual
--- setting (400-3200) would sit in the first tenth. Positions are 0..DPI_TRACK.
-local DPI_TRACK = 1000
+-- DPI sliders move over a list of round stops, one slider position each, so
+-- every stop can be reached by dragging: every 50 DPI up to 2000, then 100 up
+-- to 5000, 250 up to 10000 and 1000 above. A straight 50-36000 track would put
+-- every usual setting (400-3200) in its first tenth, and a smooth log track
+-- skips values (one pixel is more than 50 DPI). Type a value for anything else.
+local BANDS = { { 2000, 50 }, { 5000, 100 }, { 10000, 250 }, { math.huge, 1000 } }
+local stopsCache = {}
 
-local function dpiToPos(dpi, lo, hi)
-  local v = math.clamp(dpi, lo, hi)
-  return math.floor(DPI_TRACK * math.log(v / lo) / math.log(hi / lo) + 0.5)
+local function dpiStops(lo, hi, step)
+  local id = lo .. "-" .. hi .. "-" .. tostring(step)
+  if stopsCache[id] then
+    return stopsCache[id]
+  end
+  local grid = math.max(step or 1, 1) -- the sensor's own step; stops must be multiples of it
+  local stops, last = { lo }, lo
+  for _, band in ipairs(BANDS) do
+    local upto, every = band[1], math.max(band[2], grid)
+    local v = (math.floor(last / every) + 1) * every
+    while v <= math.min(upto, hi) do
+      local snapped = math.floor(v / grid + 0.5) * grid
+      if snapped > last and snapped <= hi then
+        table.insert(stops, snapped)
+        last = snapped
+      end
+      v += every
+    end
+    if last >= hi then
+      break
+    end
+  end
+  if last < hi then
+    table.insert(stops, hi)
+  end
+  stopsCache[id] = stops
+  return stops
 end
 
-local function posToDpi(pos, lo, hi, step)
-  local raw = lo * (hi / lo) ^ (pos / DPI_TRACK)
-  local grid = math.max(step or 50, 50) -- round numbers; type a value for finer steps
-  return math.clamp(math.floor(raw / grid + 0.5) * grid, lo, hi)
+-- 0-based slider position of the stop nearest to dpi
+local function dpiToPos(dpi, stops)
+  local best, bestGap = 1, math.huge
+  for i, s in ipairs(stops) do
+    local gap = math.abs(s - dpi)
+    if gap < bestGap then
+      best, bestGap = i, gap
+    end
+  end
+  return best - 1
 end
 
 local function heading(text)
@@ -330,6 +364,7 @@ local function dpiSection()
     local value = drafts[sliderKey] or stored
     local index = i - 1
     local active = index == dpi.active
+    local stops = dpiStops(dpi.min, dpi.max, dpi.step)
     table.insert(rows, ui.row({ key = "stage-" .. i, gap = 8, align = "center" }, {
       ui.button({
         key = "stage-btn-" .. i .. (active and "-on" or ""),
@@ -349,15 +384,15 @@ local function dpiSection()
       ui.slider({
         key = sliderKey,
         min = 0,
-        max = DPI_TRACK,
+        max = #stops - 1,
         step = 1,
-        value = dpiToPos(value, dpi.min, dpi.max), -- the draft while dragging
+        value = dpiToPos(value, stops), -- the draft while dragging
         controlSize = "sm",
         flexGrow = 1,
         onChange = function(v)
           local pos = tonumber(v)
           if pos ~= nil then
-            drafts[sliderKey] = posToDpi(pos, dpi.min, dpi.max, dpi.step)
+            drafts[sliderKey] = stops[math.clamp(math.floor(pos + 0.5), 0, #stops - 1) + 1]
             render()
           end
         end,
