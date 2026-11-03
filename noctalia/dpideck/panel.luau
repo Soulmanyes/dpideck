@@ -24,6 +24,7 @@ local drafts = {} -- slider positions while dragging, by slider key
 -- hide together. Hidden groups are saved in the plugin's data folder, which
 -- survives restarts and plugin updates.
 local OPTIONAL = {
+  stage_count = "stage_count",
   lod = "lift_off",
   debounce = "debounce",
   sleep = "sleep",
@@ -66,10 +67,6 @@ local function saveHidden()
   end
 end
 
-local function isHidden(item)
-  local group = OPTIONAL[item.key]
-  return group ~= nil and hidden[group] == true
-end
 local closeButton = true
 local radiusScale = 1.0
 
@@ -337,6 +334,43 @@ local function dpiToPos(dpi, stops)
   return best - 1
 end
 
+-- A row that edit mode can hide (its key is in OPTIONAL; other keys pass
+-- through). Returns nil when hidden outside edit mode; in edit mode a hidden
+-- row is one line with its title, and every optional row gets its eye button.
+local function optionalRow(key, title, build)
+  local group = OPTIONAL[key]
+  local off = group ~= nil and hidden[group] == true
+  if off and not editing then
+    return nil
+  end
+  local row
+  if off then
+    row = ui.row({ key = "row-" .. key .. "-hidden", gap = 12, align = "center" }, {
+      ui.label({ text = title, color = "on_surface_variant", flexGrow = 1 }),
+    })
+  else
+    row = build()
+  end
+  if editing and group ~= nil then
+    row = ui.row({ key = "edit-" .. key .. (off and "-off" or ""), gap = 6, align = "center" }, {
+      ui.column({ flexGrow = 1 }, { row }),
+      ui.button({
+        key = "eye-" .. key .. (off and "-off" or ""),
+        glyph = off and "eye-off" or "eye",
+        variant = "ghost",
+        controlSize = "sm",
+        tooltip = off and tr("panel.show-row") or tr("panel.hide-row"),
+        onClick = function()
+          hidden[group] = (not off) or nil
+          saveHidden()
+          render()
+        end,
+      }),
+    })
+  end
+  return row
+end
+
 local function heading(text)
   return ui.label({ text = text, fontWeight = "bold", color = "primary" })
 end
@@ -442,27 +476,32 @@ local function dpiSection()
     for n = 1, 8 do
       table.insert(counts, tostring(n))
     end
-    table.insert(rows, ui.row({ gap = 12, align = "center" }, {
-      textBlock(tr("panel.stage-count"), nil),
-      ui.select({
-        key = "select-stage-count",
-        options = counts,
-        selectedIndex = dpi.count - 1,
-        width = 160,
-        controlSize = "sm",
-        onChange = function(index)
-          local n = (tonumber(index) or 0) + 1
-          if n ~= dpi.count then
-            dpi.count = n
-            if dpi.active >= n then
-              dpi.active = n - 1
+    local countRow = optionalRow("stage_count", tr("panel.stage-count"), function()
+      return ui.row({ gap = 12, align = "center" }, {
+        textBlock(tr("panel.stage-count"), nil),
+        ui.select({
+          key = "select-stage-count",
+          options = counts,
+          selectedIndex = dpi.count - 1,
+          width = 160,
+          controlSize = "sm",
+          onChange = function(index)
+            local n = (tonumber(index) or 0) + 1
+            if n ~= dpi.count then
+              dpi.count = n
+              if dpi.active >= n then
+                dpi.active = n - 1
+              end
+              change("stage_count", n)
+              render()
             end
-            change("stage_count", n)
-            render()
-          end
-        end,
-      }),
-    }))
+          end,
+        }),
+      })
+    end)
+    if countRow ~= nil then
+      table.insert(rows, countRow)
+    end
   end
   return { heading(tr("panel.dpi")), card(rows) }
 end
@@ -485,40 +524,16 @@ local function body()
   for _, section in ipairs(data.sections or {}) do
     local rows = {}
     for _, item in ipairs(section.items or {}) do
-      local group = OPTIONAL[item.key]
-      if isHidden(item) and not editing then
+      local row = optionalRow(item.key, item.title, function()
+        if item.type == "toggle" then
+          return toggleRow(item)
+        elseif item.type == "steps" then
+          return stepsRow(item)
+        end
+        return choiceRow(item)
+      end)
+      if row == nil then
         continue
-      end
-      local row
-      if isHidden(item) then
-        -- edit mode: a hidden row is one line, its title and the eye to bring it back
-        row = ui.row({ key = "row-" .. item.key .. "-hidden", gap = 12, align = "center" }, {
-          ui.label({ text = item.title, color = "on_surface_variant", flexGrow = 1 }),
-        })
-      elseif item.type == "toggle" then
-        row = toggleRow(item)
-      elseif item.type == "steps" then
-        row = stepsRow(item)
-      else
-        row = choiceRow(item)
-      end
-      if editing and group ~= nil then
-        local isOff = hidden[group] == true
-        row = ui.row({ key = "edit-" .. item.key .. (isOff and "-off" or ""), gap = 6, align = "center" }, {
-          ui.column({ flexGrow = 1 }, { row }),
-          ui.button({
-            key = "eye-" .. item.key .. (isOff and "-off" or ""),
-            glyph = isOff and "eye-off" or "eye",
-            variant = "ghost",
-            controlSize = "sm",
-            tooltip = isOff and tr("panel.show-row") or tr("panel.hide-row"),
-            onClick = function()
-              hidden[group] = (not isOff) or nil
-              saveHidden()
-              render()
-            end,
-          }),
-        })
       end
       table.insert(rows, row)
     end

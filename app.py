@@ -20,7 +20,7 @@ import atk  # noqa: E402
 import updater
 
 APP_ID = "local.dpideck.DPIdeck"
-VERSION = "2.3.1"   # bump together with the release tag (v2.3.1)
+VERSION = "2.4"   # bump together with the release tag (v2.4)
 REPO = "Soulmanyes/dpideck"
 CONFIG_DIR = atk.CONFIG_DIR
 
