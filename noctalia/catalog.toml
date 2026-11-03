@@ -3,7 +3,7 @@
 [[plugin]]
 id = "soulmanyes/dpideck"
 name = "DPIdeck"
-version = "1.2.0"
+version = "1.3.0"
 author = "Soulmanyes"
 license = "CC0-1.0"
 icon = "mouse"
