@@ -36,7 +36,8 @@ BRIGHTNESS = [(0, "Low"), (1, "Medium"), (2, "High")]
 SPEED = [(0, "Slow"), (1, "Medium"), (2, "Fast")]
 SLEEP = [(30, "30 s"), (60, "1 min"), (120, "2 min"), (180, "3 min"),
          (300, "5 min"), (1200, "20 min"), (1500, "25 min"), (1800, "30 min")]
-# The polling rates the panel's quick buttons offer, where the mouse has them
+# The polling rates the panel's quick buttons offer on a mouse that goes above
+# 1000 Hz. A mouse that tops out at 1000 Hz gets all of its rates instead.
 QUICK_RATES = (1000, 2000, 4000, 8000)
 # Short names on the sensor-mode buttons
 MODE_TICKS = {"Competitive Max": "Comp. Max"}
@@ -90,7 +91,10 @@ def describe(s, mouse):
     """
     caps = s["caps"]
     allowed = offered(s)
-    rates = [hz for hz in QUICK_RATES if hz in caps["rates"]]
+    if max(caps["rates"], default=0) > 1000:
+        rates = [hz for hz in QUICK_RATES if hz in caps["rates"]]
+    else:   # a 1K mouse: its lower rates are the only choices it has
+        rates = sorted(caps["rates"])
     if s["rate_hz"] is not None and s["rate_hz"] not in rates:   # e.g. 500 Hz: still show it
         rates = sorted(rates + [s["rate_hz"]])
     quick = [{"type": "steps", "key": "rate", "title": "Polling rate", "value": s["rate_hz"],

@@ -90,15 +90,15 @@ bar settings.
 
 Click the widget to change the mouse's settings without opening the app. Each DPI
 stage has a slider (or type an exact value), and quick settings hold buttons for
-the polling rate (1K, 2K, 4K, 8K, as far as your receiver or cable allows) and the
-sensor mode, plus the motion sync, angle snapping, ripple control and long range
+the polling rate (1K, 2K, 4K, 8K, as far as your receiver or cable allows; a mouse
+that tops out at 1000 Hz gets 125, 250, 500 and 1K instead) and the sensor mode, plus the motion sync, angle snapping, ripple control and long range
 switches. Lift-off distance, click debounce, sleep time and the DPI light show
 below them; to hide any of these, press the eye button in the panel's header,
 click the eye next to the row, then press Done. The panel remembers your choice.
 The panel offers the same choices as the app for your mouse, and every change is
 read back from the mouse. Opening the panel wakes the mouse; if it is asleep, move
 it and press reload. Buttons, colours, the receiver light, polling rates below
-1000 Hz and backups stay in the app, which the panel's open button starts. The
+1000 Hz on faster mice, and backups stay in the app, which the panel's open button starts. The
 panel needs Noctalia 5.4.1 or newer.
 
 Without Noctalia this step is skipped and nothing else changes. If you install
