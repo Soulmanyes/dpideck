@@ -92,8 +92,9 @@ Click the widget to change the mouse's settings without opening the app. Each DP
 stage has a slider (or type an exact value), and quick settings hold buttons for
 the polling rate (1K, 2K, 4K, 8K, as far as your receiver or cable allows) and the
 sensor mode, plus the motion sync, angle snapping, ripple control and long range
-switches. Lift-off distance, click debounce, sleep time and the DPI light can be
-added to the panel in Noctalia's Settings → Plugins (the gear next to DPIdeck).
+switches. Lift-off distance, click debounce, sleep time and the DPI light show
+below them; to hide any of these, press the eye button in the panel's header,
+click the eye next to the row, then press Done. The panel remembers your choice.
 The panel offers the same choices as the app for your mouse, and every change is
 read back from the mouse. Opening the panel wakes the mouse; if it is asleep, move
 it and press reload. Buttons, colours, the receiver light, polling rates below

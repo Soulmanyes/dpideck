@@ -12,9 +12,10 @@ tags = ["hardware", "system", "panel"]
 dependencies = ["python3"]
 
 # Opened by clicking the bar widget. DPI stages and quick settings (polling
-# rate, sensor mode, switches) always show; lift-off, debounce, sleep and the
-# DPI light are off by default and turned on below. Buttons and the receiver
-# light stay in the app.
+# rate, sensor mode, switches) always show. Lift-off, debounce, sleep and the
+# DPI light show too, and can be hidden with the panel's own edit button (saved
+# in the plugin's data folder, not here). Buttons and the receiver light stay
+# in the app.
 [[panel]]
 id = "panel"
 entry = "panel.luau"
@@ -22,34 +23,6 @@ width = 440
 height = 720
 placement = "attached"
 open_near_click = true
-
-  [[panel.setting]]
-  key = "show_lift_off"
-  type = "bool"
-  label_key = "settings.show_lift_off.label"
-  description_key = "settings.show_lift_off.description"
-  default = false
-
-  [[panel.setting]]
-  key = "show_debounce"
-  type = "bool"
-  label_key = "settings.show_debounce.label"
-  description_key = "settings.show_debounce.description"
-  default = false
-
-  [[panel.setting]]
-  key = "show_sleep"
-  type = "bool"
-  label_key = "settings.show_sleep.label"
-  description_key = "settings.show_sleep.description"
-  default = false
-
-  [[panel.setting]]
-  key = "show_lighting"
-  type = "bool"
-  label_key = "settings.show_lighting.label"
-  description_key = "settings.show_lighting.description"
-  default = false
 
 [[widget]]
 id = "bar"

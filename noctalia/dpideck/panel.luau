@@ -18,21 +18,57 @@ local queue = {} -- pending { key, value } writes, oldest first
 local status = nil -- { text, color }
 local drafts = {} -- slider positions while dragging, by slider key
 
--- Rows outside DPI and quick settings appear only when their panel setting
--- (plugin.toml, Settings -> Plugins) is on. Read again on every open.
+-- Rows outside DPI and quick settings show by default and can be hidden from
+-- the panel itself: the header's edit button turns on edit mode, where each
+-- of these rows gets an eye button. Row key -> group; the light's three rows
+-- hide together. Hidden groups are saved in the plugin's data folder, which
+-- survives restarts and plugin updates.
 local OPTIONAL = {
-  lod = "show_lift_off",
-  debounce = "show_debounce",
-  sleep = "show_sleep",
-  light_mode = "show_lighting",
-  light_brightness = "show_lighting",
-  light_speed = "show_lighting",
+  lod = "lift_off",
+  debounce = "debounce",
+  sleep = "sleep",
+  light_mode = "lighting",
+  light_brightness = "lighting",
+  light_speed = "lighting",
 }
-local shown = {} -- setting key -> bool
+local hidden = {} -- group -> true
+local editing = false
 
-local function wanted(item)
-  local setting = OPTIONAL[item.key]
-  return setting == nil or shown[setting] == true
+local function prefsPath()
+  local dir = noctalia.pluginDataDir()
+  return dir and (dir .. "/panel.json") or nil
+end
+
+local function loadHidden()
+  hidden = {}
+  -- a missing or broken panel.json just means nothing is hidden
+  local ok, prefs = pcall(function()
+    local path = prefsPath()
+    local raw = path and noctalia.readFile(path)
+    return raw and noctalia.json.decode(raw)
+  end)
+  if ok and type(prefs) == "table" and type(prefs.hidden) == "table" then
+    for _, group in ipairs(prefs.hidden) do
+      hidden[group] = true
+    end
+  end
+end
+
+local function saveHidden()
+  local list = {}
+  for group in pairs(hidden) do
+    table.insert(list, group)
+  end
+  table.sort(list)
+  local path = prefsPath()
+  if path then
+    noctalia.writeFile(path, noctalia.json.encode({ hidden = list }))
+  end
+end
+
+local function isHidden(item)
+  local group = OPTIONAL[item.key]
+  return group ~= nil and hidden[group] == true
 end
 local closeButton = true
 local radiusScale = 1.0
@@ -315,7 +351,7 @@ local function dpiSection()
         min = 0,
         max = DPI_TRACK,
         step = 1,
-        value = dpiToPos(stored, dpi.min, dpi.max),
+        value = dpiToPos(value, dpi.min, dpi.max), -- the draft while dragging
         controlSize = "sm",
         flexGrow = 1,
         onChange = function(v)
@@ -404,19 +440,52 @@ local function body()
   for _, node in ipairs(dpiSection()) do
     table.insert(children, node)
   end
+  if editing then
+    table.insert(children, ui.label({
+      text = tr("panel.edit-hint"),
+      fontSize = 11,
+      color = "on_surface_variant",
+    }))
+  end
   for _, section in ipairs(data.sections or {}) do
     local rows = {}
     for _, item in ipairs(section.items or {}) do
-      if not wanted(item) then
+      local group = OPTIONAL[item.key]
+      if isHidden(item) and not editing then
         continue
       end
-      if item.type == "toggle" then
-        table.insert(rows, toggleRow(item))
+      local row
+      if isHidden(item) then
+        -- edit mode: a hidden row is one line, its title and the eye to bring it back
+        row = ui.row({ key = "row-" .. item.key .. "-hidden", gap = 12, align = "center" }, {
+          ui.label({ text = item.title, color = "on_surface_variant", flexGrow = 1 }),
+        })
+      elseif item.type == "toggle" then
+        row = toggleRow(item)
       elseif item.type == "steps" then
-        table.insert(rows, stepsRow(item))
+        row = stepsRow(item)
       else
-        table.insert(rows, choiceRow(item))
+        row = choiceRow(item)
       end
+      if editing and group ~= nil then
+        local isOff = hidden[group] == true
+        row = ui.row({ key = "edit-" .. item.key .. (isOff and "-off" or ""), gap = 6, align = "center" }, {
+          ui.column({ flexGrow = 1 }, { row }),
+          ui.button({
+            key = "eye-" .. item.key .. (isOff and "-off" or ""),
+            glyph = isOff and "eye-off" or "eye",
+            variant = "ghost",
+            controlSize = "sm",
+            tooltip = isOff and tr("panel.show-row") or tr("panel.hide-row"),
+            onClick = function()
+              hidden[group] = (not isOff) or nil
+              saveHidden()
+              render()
+            end,
+          }),
+        })
+      end
+      table.insert(rows, row)
     end
     if #rows > 0 then
       table.insert(children, heading(section.title))
@@ -464,6 +533,17 @@ render = function()
       end,
     }),
     ui.button({
+      key = editing and "edit-on" or "edit",
+      glyph = editing and "check" or "eye",
+      text = editing and tr("panel.edit-done") or nil,
+      variant = editing and "primary" or "ghost",
+      tooltip = editing and tr("panel.edit-done") or tr("panel.edit"),
+      onClick = function()
+        editing = not editing
+        render()
+      end,
+    }),
+    ui.button({
       key = "open-app",
       glyph = "external-link",
       variant = "ghost",
@@ -496,9 +576,8 @@ end
 function onOpen(_context)
   closeButton = noctalia.getSetting("shell.show_close_buttons") ~= false
   radiusScale = noctalia.getSetting("shell.corner_radius_scale") or 1.0
-  for _, setting in pairs(OPTIONAL) do
-    shown[setting] = noctalia.getConfig(setting) == true
-  end
+  editing = false
+  loadHidden()
   render() -- the last reading, while a fresh one loads
   if #queue == 0 then
     run("state")

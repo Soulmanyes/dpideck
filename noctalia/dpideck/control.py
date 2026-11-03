@@ -85,8 +85,8 @@ def describe(s, mouse):
     """The settings as the panel draws them: a DPI block plus sections of rows.
 
     The first section holds the quick controls: polling-rate (1K-8K) and
-    sensor-mode buttons and the switches. The panel hides the other sections'
-    rows unless they are turned on in its settings.
+    sensor-mode buttons and the switches. The other sections' rows show too;
+    the panel's edit mode can hide them.
     """
     caps = s["caps"]
     allowed = offered(s)
