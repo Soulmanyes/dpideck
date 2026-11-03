@@ -33,5 +33,11 @@
     "edit-hint": "Click an eye to hide or show a row, then press Done.",
     "hide-row": "Hide this row",
     "show-row": "Show this row"
+  },
+  "settings": {
+    "floating": {
+      "label": "Floating panel",
+      "description": "Open the settings panel as a floating window instead of attached to the bar."
+    }
   }
 }

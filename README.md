@@ -100,7 +100,9 @@ The panel offers the same choices as the app for your mouse, and every change is
 read back from the mouse. Opening the panel wakes the mouse; if it is asleep, move
 it and press reload. Buttons, colours, the receiver light, polling rates below
 1000 Hz on faster mice, and backups stay in the app, which the panel's open button
-starts. The panel needs Noctalia 5.4.1 or newer.
+starts. To open the panel as a floating window instead of attached to the bar,
+middle-click the widget and turn on Floating panel. The panel needs Noctalia 5.4.1
+or newer.
 
 Without Noctalia this step is skipped and nothing else changes. If you install
 Noctalia later, run the install command again. The widget's files are in `noctalia/`.

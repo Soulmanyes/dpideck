@@ -91,5 +91,7 @@ function update()
 end
 
 function onClick()
-  noctalia.togglePanel("soulmanyes/dpideck:panel")
+  -- the widget's "Floating panel" setting picks the floating copy of the panel
+  local floating = noctalia.getConfig("floating") == true
+  noctalia.togglePanel(floating and "soulmanyes/dpideck:panel-floating" or "soulmanyes/dpideck:panel")
 end

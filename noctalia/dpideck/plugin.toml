@@ -24,6 +24,22 @@ height = 720
 placement = "attached"
 open_near_click = true
 
+# The same panel as a floating window. The bar widget's "Floating panel"
+# setting (middle-click the widget) picks which of the two a click opens.
+[[panel]]
+id = "panel-floating"
+entry = "panel.luau"
+width = 440
+height = 720
+placement = "floating"
+
 [[widget]]
 id = "bar"
 entry = "dpideck.luau"
+
+  [[widget.setting]]
+  key = "floating"
+  type = "bool"
+  label_key = "settings.floating.label"
+  description_key = "settings.floating.description"
+  default = false
