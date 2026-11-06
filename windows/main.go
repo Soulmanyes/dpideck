@@ -1007,7 +1007,35 @@ func (a *app) initUpdates() {
 	a.autoUpdate.SetChecked(a.upd.Auto())
 	if !a.demo {
 		a.checkUpdate(false)
+		a.showWhatsNew()
 	}
+}
+
+// showWhatsNew shows the notes of the release just updated to, once, on the first
+// start after an update. Quiet when offline: it tries again on the next start.
+func (a *app) showWhatsNew() {
+	go func() {
+		releases, err := a.upd.WhatsNew()
+		if err != nil || len(releases) == 0 {
+			return
+		}
+		var parts []string
+		for _, r := range releases {
+			notes := update.PlainNotes(r.Notes)
+			if len(releases) > 1 {
+				notes = r.Tag + "\r\n" + notes
+			}
+			parts = append(parts, notes)
+		}
+		text := strings.Join(parts, "\r\n\r\n")
+		if r := []rune(text); len(r) > 1500 {
+			text = string(r[:1500]) + "…\r\n\r\nThe full notes are on GitHub: " + releases[0].URL
+		}
+		a.mw.Synchronize(func() {
+			a.upd.MarkSeen()
+			walk.MsgBox(a.mw, "What's new in DPIdeck "+releases[0].Tag, text, walk.MsgBoxIconInformation)
+		})
+	}()
 }
 
 func (a *app) toggleAutoUpdate() {

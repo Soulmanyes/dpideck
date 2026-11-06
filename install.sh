@@ -103,6 +103,7 @@ mkdir -p "$DEST" "$APPS" "$BIN"
 install -m 644 "$SRC/atk.py" "$DEST/"
 install -m 755 "$SRC/app.py" "$DEST/"
 install -m 644 "$SRC/updater.py" "$DEST/"
+install -m 644 "$SRC/whatsnew_gtk.py" "$DEST/"
 rm -f "$DEST/devices.json"    # older versions shipped this; it is now downloaded
 ln -sf "$DEST/app.py" "$BIN/$NAME"
 

@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -135,5 +136,50 @@ func TestDevBuildNeverInstalls(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(exe); string(b) != "MZold" {
 		t.Fatal("dev build exe replaced")
+	}
+}
+
+func TestWhatsNew(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`[{"tag_name":"v2.6","body":"- six\r\n\r\n**Full Changelog**: x"},
+			{"tag_name":"v2.5","body":"five"},{"tag_name":"v2.4","body":"four"},
+			{"tag_name":"v2.5.5","body":""},{"tag_name":"v2.7","body":"later","draft":true}]`))
+	}))
+	defer srv.Close()
+	cases := []struct {
+		name, state, version string
+		want                 []string
+		seen                 string
+	}{
+		{"fresh", `{}`, "2.6", nil, "2.6"},
+		{"in-app update before this", `{"installed":"v2.6"}`, "2.6", []string{"v2.6"}, ""},
+		{"skipped one", `{"seen":"2.4"}`, "2.6", []string{"v2.6", "v2.5"}, "2.4"},
+		{"same", `{"seen":"2.6"}`, "2.6", nil, "2.6"},
+		{"downgrade", `{"seen":"2.7"}`, "2.6", nil, "2.6"},
+		{"no notes", `{"seen":"2.5"}`, "2.5.5", nil, "2.5.5"},
+		{"dev build", `{}`, "dev", nil, ""},
+	}
+	for _, c := range cases {
+		f := filepath.Join(t.TempDir(), "updates.json")
+		os.WriteFile(f, []byte(c.state), 0o644)
+		u := New("O/r", c.version, "x.exe", f)
+		u.API = srv.URL
+		got, err := u.WhatsNew()
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		var tags []string
+		for _, r := range got {
+			tags = append(tags, r.Tag)
+		}
+		if strings.Join(tags, ",") != strings.Join(c.want, ",") || u.st.Seen != c.seen {
+			t.Errorf("%s: got %v seen %q, want %v seen %q", c.name, tags, u.st.Seen, c.want, c.seen)
+		}
+		if len(got) > 0 && got[0].Notes != "- six" {
+			t.Errorf("%s: notes %q", c.name, got[0].Notes)
+		}
+	}
+	if p := PlainNotes("## Hi\n- **Bold** `c` [l](http://a)"); p != "Hi\r\n• Bold c l" {
+		t.Errorf("PlainNotes: %q", p)
 	}
 }

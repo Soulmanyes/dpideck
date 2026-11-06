@@ -15,8 +15,11 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -42,6 +45,7 @@ type state struct {
 	Latest    *Release `json:"latest,omitempty"`
 	Installed string   `json:"installed,omitempty"`
 	Failed    string   `json:"failed,omitempty"`
+	Seen      string   `json:"seen,omitempty"` // the version whose notes were shown last
 }
 
 type Updater struct {
@@ -51,6 +55,7 @@ type Updater struct {
 	StateFile string
 	API       string // GitHub API base; tests point it at a local server
 	st        state
+	mu        sync.Mutex // Check and WhatsNew run at the same time on start
 }
 
 func New(repo, version, exe, stateFile string) *Updater {
@@ -63,6 +68,8 @@ func New(repo, version, exe, stateFile string) *Updater {
 }
 
 func (u *Updater) save() error {
+	u.mu.Lock()
+	defer u.mu.Unlock()
 	if err := os.MkdirAll(filepath.Dir(u.StateFile), 0o755); err != nil {
 		return err
 	}
@@ -273,3 +280,110 @@ func exeFromZip(data []byte) ([]byte, error) {
 
 // CleanOld removes the DPIdeck.exe.old an update left behind.
 func (u *Updater) CleanOld() { os.Remove(u.Exe + ".old") }
+
+// WhatsNew returns the releases this start is the first one of, newest first; nil
+// when there is nothing to show. The twin of updater.py's whats_new(): a fresh
+// install and a downgrade show nothing, skipped versions show too, and GitHub is
+// asked each time there is something to show, because notes are sometimes written
+// after the release. An error means GitHub couldn't be reached: try on the next
+// start. Call MarkSeen once the notes are on screen.
+func (u *Updater) WhatsNew() ([]Release, error) {
+	mine := ParseVersion(u.Version)
+	if mine == nil {
+		return nil, nil
+	}
+	seen := ParseVersion(u.st.Seen)
+	onlyMine := false
+	if seen == nil {
+		if inst := ParseVersion(u.st.Installed); inst == nil || compare(inst, mine) != 0 {
+			u.MarkSeen() // a fresh install, or an update by hand from before this
+			return nil, nil
+		}
+		seen, onlyMine = []int{0, 0, 0}, true // updated in the app from a version without this
+	}
+	if c := compare(mine, seen); c <= 0 {
+		if c < 0 { // downgraded: show the next update's notes again
+			u.MarkSeen()
+		}
+		return nil, nil
+	}
+	resp, err := get(u.API + "/repos/" + u.Repo + "/releases?per_page=30")
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	var data []struct {
+		Tag        string `json:"tag_name"`
+		URL        string `json:"html_url"`
+		Body       string `json:"body"`
+		Draft      bool   `json:"draft"`
+		Prerelease bool   `json:"prerelease"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+		return nil, err
+	}
+	var out []Release
+	for _, d := range data {
+		v := ParseVersion(d.Tag)
+		notes := CleanNotes(d.Body)
+		if v == nil || d.Draft || d.Prerelease || notes == "" {
+			continue
+		}
+		if compare(v, mine) == 0 || (!onlyMine && compare(v, seen) > 0 && compare(v, mine) < 0) {
+			out = append(out, Release{Tag: d.Tag, URL: d.URL, Notes: notes})
+		}
+	}
+	if len(out) == 0 { // no notes written for these versions
+		u.MarkSeen()
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		return compare(ParseVersion(out[i].Tag), ParseVersion(out[j].Tag)) > 0
+	})
+	return out, nil
+}
+
+func (u *Updater) MarkSeen() {
+	u.st.Seen = u.Version
+	u.save()
+}
+
+func compare(a, b []int) int {
+	switch {
+	case newer(b, a):
+		return 1
+	case newer(a, b):
+		return -1
+	}
+	return 0
+}
+
+// CleanNotes drops GitHub's added "Full Changelog" line.
+func CleanNotes(text string) string {
+	var keep []string
+	for _, ln := range strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n") {
+		if !strings.HasPrefix(strings.TrimSpace(ln), "**Full Changelog**") {
+			keep = append(keep, ln)
+		}
+	}
+	return strings.TrimSpace(strings.Join(keep, "\n"))
+}
+
+var (
+	mdHead = regexp.MustCompile(`^#+\s+`)
+	mdItem = regexp.MustCompile(`^(\s*)[-*+]\s+`)
+	mdLink = regexp.MustCompile(`\[([^\]]+)\]\([^)]+\)`)
+	mdMark = regexp.MustCompile("\\*\\*|`")
+)
+
+// PlainNotes turns release notes (GitHub Markdown) into plain text for a message
+// box: list items as bullets, links as their text, no ** or ` marks.
+func PlainNotes(text string) string {
+	lines := strings.Split(text, "\n")
+	for i, ln := range lines {
+		ln = mdHead.ReplaceAllString(ln, "")
+		ln = mdItem.ReplaceAllString(ln, "${1}• ")
+		ln = mdLink.ReplaceAllString(ln, "$1")
+		lines[i] = mdMark.ReplaceAllString(ln, "")
+	}
+	return strings.Join(lines, "\r\n")
+}

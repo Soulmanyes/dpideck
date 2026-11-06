@@ -185,7 +185,9 @@ If you try another mouse:
 From version 2.2 on, both versions check GitHub once a day for a newer release.
 When there is one, a banner shows "DPIdeck vX is available" with an **Update**
 button. Turn on **Install updates automatically** in the Updates section at the
-bottom to install them without asking. A restart starts the new version.
+bottom to install them without asking. A restart starts the new version, and on
+that first start a **What's new** window shows the release's notes (and those of
+any versions you skipped), once.
 
 - Linux: the update downloads the release and runs its `install.sh`. It skips the
   password prompt when the udev rule is already in place; if a release ever

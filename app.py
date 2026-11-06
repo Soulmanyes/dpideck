@@ -13,14 +13,15 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Adw, Gdk, Gio, GLib, Gtk  # noqa: E402
+from gi.repository import Adw, Gdk, Gio, GLib, Gtk
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
-import atk  # noqa: E402
+import atk
 import updater
+import whatsnew_gtk
 
 APP_ID = "local.dpideck.DPIdeck"
-VERSION = "2.4.1"   # bump together with the release tag (v2.4.1)
+VERSION = "2.5"   # bump together with the release tag (v2.5)
 REPO = "Soulmanyes/dpideck"
 CONFIG_DIR = atk.CONFIG_DIR
 
@@ -198,6 +199,7 @@ class Window(Adw.ApplicationWindow):
         self.connect_mouse()
         GLib.timeout_add_seconds(3, self._poll)
         self.check_update()
+        whatsnew_gtk.show_when_updated(self, self.updates, "DPIdeck")
 
     def _scroll_page(self, _ctrl, _dx, dy):
         w = self.page.get_first_child()
